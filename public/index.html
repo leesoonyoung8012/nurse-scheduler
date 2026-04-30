@@ -1,0 +1,3307 @@
+<!DOCTYPE html>
+localStorage
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>간호사 3교대 근무표 AI 스케줄러 v8</title>
+<style>
+    :root{
+      --bg:#f8fafc;--card:#fff;--line:#e2e8f0;--text:#0f172a;--muted:#64748b;
+      --primary:#2563eb;--primary2:#1d4ed8;--danger:#dc2626;--ok:#059669;
+      --warnbg:#fffbeb;--warnline:#fcd34d;--warntext:#92400e;--soft:#f1f5f9;
+    }
+    *{box-sizing:border-box} body{margin:0;font-family:Arial,sans-serif;background:var(--bg);color:var(--text)}
+    .hidden{display:none!important}.page{max-width:1520px;margin:0 auto;padding:24px}
+    .login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .login-card{width:100%;max-width:520px;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:28px;box-shadow:0 8px 30px rgba(15,23,42,.06)}
+    h1,h2,h3,h4,p{margin:0}.sub{color:var(--muted);font-size:14px;margin-top:8px}
+    .field{display:flex;flex-direction:column;gap:6px}.label{font-size:13px;color:var(--muted)}
+    input,select,textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font:inherit;background:#fff}
+    textarea{min-height:76px;resize:vertical}
+    button{padding:10px 14px;border:1px solid var(--line);background:#fff;border-radius:12px;font-weight:700;cursor:pointer}
+    button.primary{background:var(--primary);color:#fff;border-color:var(--primary)} button.primary:hover{background:var(--primary2)}
+    button.danger{color:var(--danger);border-color:#fecaca} .row,.btns,.tabs,.topbar{display:flex;gap:8px;flex-wrap:wrap}
+    .topbar{justify-content:space-between;align-items:flex-start}
+    .grid2,.grid3,.grid4,.grid5,.compact-row,.grid12,.stats{display:grid;gap:16px}
+    .grid2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .grid4{grid-template-columns:repeat(4,minmax(0,1fr))}.grid5{grid-template-columns:repeat(5,minmax(0,1fr))}
+    .compact-row{grid-template-columns:repeat(6,minmax(0,1fr))}.grid12{grid-template-columns:repeat(12,minmax(0,1fr))}
+    .stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    .pill{background:#fff;border:1px solid var(--line);border-radius:18px;padding:14px}
+    .pill .t{font-size:12px;color:var(--muted)} .pill .v{margin-top:6px;font-size:24px;font-weight:700}
+    .tabs .tab{padding:10px 14px;border-radius:999px}.tabs .active{background:var(--primary);border-color:var(--primary);color:#fff}
+    .section{display:flex;flex-direction:column;gap:16px}.item{border:1px solid var(--line);border-radius:16px;padding:12px;background:#fff}
+    .badge{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:12px;background:#fff}
+    .alert{background:var(--warnbg);border:1px solid var(--warnline);color:var(--warntext);border-radius:16px;padding:14px}
+    .ok{color:var(--ok);font-weight:700}.muted{color:var(--muted)} .small{font-size:12px}
+    .checks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
+    .check-item{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:10px}
+    .calendar{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}
+    .calendar-head,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+    .calendar-head div{background:var(--soft);padding:10px;text-align:center;font-weight:700;border-bottom:1px solid var(--line)}
+    .daycell{min-height:120px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px;display:flex;flex-direction:column;gap:6px}
+    .daynum{font-weight:700;font-size:13px}.daymeta{display:flex;gap:4px;flex-wrap:wrap}
+    .event{font-size:11px;padding:4px 6px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;cursor:pointer}
+    .event.shared{background:#ecfdf5;border-color:#a7f3d0}.event.hospital{background:#fef2f2;border-color:#fecaca}
+    .schedule-wrap{overflow:auto;border:1px solid var(--line);border-radius:18px;background:#fff}
+.schedule-code-cell{min-width:52px;font-weight:700}
+.schedule-cell-select{
+  width:100%;
+  min-width:52px;
+  border:1px solid transparent;
+  background:transparent;
+  padding:2px 18px 2px 4px;
+  text-align:center;
+  font-weight:700;
+  font-size:12px;
+  appearance:none;
+  -webkit-appearance:none;
+  -moz-appearance:none;
+  border-radius:8px;
+}
+.schedule-cell-select:hover,
+.schedule-cell-select:focus{
+  border-color:var(--line);
+  background-color:#fff;
+  background-repeat:no-repeat;
+  background-position:right 6px center;
+  background-size:10px 10px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path d='M2 3l3 4 3-4' fill='none' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+    table{border-collapse:collapse;min-width:1400px;width:100%} th,td{border:1px solid var(--line);padding:8px;text-align:center;font-size:12px}
+    th.sticky,td.sticky{position:sticky;left:0;background:#fff;z-index:1} th.sticky{z-index:2}
+    .footer-note{margin-top:14px;color:var(--muted);font-size:12px}
+.compact-row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.compact-row .field{flex:1 1 120px;min-width:100px}
+.compact-row .field.small{flex:0 0 100px}
+
+    .popup{position:fixed;right:20px;top:20px;background:#111827;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);z-index:1000}
+    @media (max-width:960px){.grid2,.grid3,.grid4,.grid5,.compact-row,.grid12,.checks,.stats{grid-template-columns:1fr}.daycell{min-height:100px}}
+  
+    .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:2000}
+    .modal-card{width:100%;max-width:460px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+    .modal-title{font-size:20px;font-weight:700}
+    .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+  
+    .time-select{max-height:110px;overflow-y:auto}
+
+  
+    .dow-sat{color:#2563eb;font-weight:700}
+    .dow-sun,.dow-holiday{color:#dc2626;font-weight:700}
+    .date-sat{color:#2563eb;font-weight:700}
+    .date-sun,.date-holiday{color:#dc2626;font-weight:700}
+    .holiday-note{font-size:10px;line-height:1.2;padding:2px 4px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412}
+
+  
+    .selection-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+    .chip-check{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:6px 10px;background:#fff;font-size:12px}
+    .chip-check input{width:auto}
+    .section-title{font-size:13px;color:var(--muted);margin-bottom:6px}
+  
+select{
+  max-height:120px;
+}
+
+
+.time-select-collapsed{
+  width: 100%;
+}
+.time-select-open{
+  width: 100%;
+}
+
+
+.nurse-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:16px;background:#fff}
+.nurse-table{width:100%;border-collapse:separate;border-spacing:0;min-width:1200px}
+.nurse-table th,.nurse-table td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+.nurse-table th{position:sticky;top:0;background:#f8fafc;font-weight:700;z-index:1}
+.nurse-table tr:last-child td{border-bottom:none}
+.inline-checks{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:8px 10px;
+  align-items:start;
+}
+.inline-checks .check-item{
+  display:grid;
+  grid-template-columns:18px 1fr;
+  column-gap:8px;
+  align-items:start;
+  padding:0;
+  border:none;
+  background:transparent;
+  border-radius:0;
+  max-width:none;
+  min-height:auto;
+  line-height:1.4;
+  text-align:left;
+}
+.inline-checks .check-item input[type="checkbox"]{
+  margin:2px 0 0 0;
+  width:16px;
+  height:16px;
+}
+.inline-checks .check-item span{
+  display:block;
+  white-space:normal;
+  word-break:keep-all;
+  overflow-wrap:anywhere;
+  text-align:left;
+}
+.inline-checks .check-item .badge{
+  display:inline-flex;
+  vertical-align:middle;
+  margin-left:4px;
+}
+.cell-actions{display:flex;gap:6px;align-items:center}
+.small-input{min-width:84px}
+
+
+.admin-ward-create-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:16px;align-items:end}
+.admin-ward-list-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.admin-ward-card .meta{margin-top:8px;color:var(--muted);font-size:12px}
+.admin-ward-card .row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.admin-ward-card .info-grid{display:grid;grid-template-columns:120px 1fr;gap:12px 16px;margin-top:14px;align-items:center}
+@media (max-width:960px){
+  .admin-ward-create-grid{grid-template-columns:1fr}
+  .admin-ward-card .info-grid{grid-template-columns:1fr}
+}
+
+
+.generation-rules-list{display:flex;flex-direction:column;gap:10px}
+.generation-rule-item{padding:14px 16px}
+.generation-rule-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:start}
+.generation-rule-main{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;align-items:start;min-width:0}
+.generation-rule-main input[type="checkbox"]{margin:4px 0 0 0;width:18px;height:18px}
+.generation-rule-content{min-width:0;display:block;text-align:left;line-height:1.45;word-break:keep-all;overflow-wrap:anywhere}
+.generation-rule-title{display:block;font-weight:700;text-align:left;white-space:normal;word-break:keep-all;overflow-wrap:anywhere}
+.generation-rule-meta{margin-top:6px}
+.generation-rule-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.generation-rule-drag{cursor:grab;user-select:none}
+.generation-rule-item.dragging{opacity:.55}
+.generation-rule-item.drag-over{outline:2px dashed var(--accent);outline-offset:2px}
+
+
+@media (max-width:780px){
+  .generation-rule-row{grid-template-columns:1fr}
+  .generation-rule-actions{justify-content:flex-end}
+}
+</style>
+</head>
+<body>
+<div class="popup hidden" id="popup"></div>
+<div class="hidden" id="modalRoot"></div>
+<div class="login-page" id="loginScreen">
+<div class="login-card">
+<h1>간호사 3교대 근무표 AI 스케줄러</h1>
+<div class="sub">첫 화면은 로그인 페이지입니다. 수간호사는 본인 병동만, 전체 관리자는 전체 시스템을 관리합니다. 모든 설정은 Firebase에 공용 저장됩니다.</div>
+<div style="height:18px"></div>
+<div class="field"><div class="label">아이디</div><input autocomplete="username" id="loginId"/></div>
+<div style="height:12px"></div>
+<div class="field"><div class="label">비밀번호</div><input autocomplete="current-password" id="loginPw" onkeydown="if(event.key==='Enter') login()" type="password"/></div>
+<div style="height:16px"></div>
+<button class="primary" onclick="login()" style="width:100%">로그인</button>
+<div class="alert hidden" id="loginError" style="margin-top:14px"></div>
+</div>
+</div>
+<div class="page hidden" id="appScreen">
+<div class="topbar">
+<div>
+<h1 id="appTitle"></h1>
+<div class="sub" id="appSubtitle"></div>
+</div>
+<div class="btns">
+<button onclick="logout()">로그아웃</button>
+</div>
+</div>
+<div class="stats" id="topStats"></div>
+<div class="tabs" id="tabs"></div>
+<section class="section hidden" id="tab-admin-overview"></section>
+<section class="section hidden" id="tab-admin-wards"></section>
+<section class="section hidden" id="tab-admin-codes"></section>
+<section class="section hidden" id="tab-admin-calendar"></section>
+<section class="section hidden" id="tab-admin-generate"></section>
+<section class="section hidden" id="tab-admin-requests"></section>
+<section class="section hidden" id="tab-ward-nurses"></section>
+<section class="section hidden" id="tab-ward-leave"></section>
+<section class="section hidden" id="tab-ward-leaves"></section>
+<section class="section hidden" id="tab-ward-change"></section>
+<section class="section hidden" id="tab-ward-requests"></section>
+<section class="section hidden" id="tab-ward-schedule"></section>
+<section class="section hidden" id="tab-ward-calendar"></section>
+<div class="footer-note">저장 위치: Firebase Realtime Database. 여러 부서/PC/모바일에서 동일 데이터가 공유됩니다. localStorage는 네트워크 장애 시 임시 백업으로만 사용됩니다.</div>
+</div>
+<script>
+function addNurse(){
+  const ward=getCurrentWard();
+  ensureWardDraftState();
+  const rows=nurseDraftState[ward.id] || [];
+  const id='n-'+Date.now();
+  rows.push({
+    id,
+    name:'',
+    team:'A',
+    workTypeIds:[],
+    placementRuleIds:[],
+    maxNightPerMonth:data.commonScheduleSettings?.defaultMaxNightPerMonth||6,
+    maxConsecutiveDays:data.commonScheduleSettings?.defaultMaxConsecutiveDays||5,
+    notes:'',
+    employmentStatus:'active'
+  });
+  nurseDraftState[ward.id]=rows;
+  renderWardNurses();
+}
+
+const STORAGE_KEY='nurse-shift-scheduler-v4-html';
+const legacyKeys=['nurse-shift-scheduler-v3-html','nurse-shift-scheduler-v2-html','nurse-shift-scheduler-v1-html'];
+let currentUser=null, activeTab='', uiYear=new Date().getFullYear(), uiMonth=new Date().getMonth()+1, resultCache=null;
+let nurseDraftState={};
+let scheduleDraftState={};
+let preselectNewWorkTypeShiftCodeId='';
+let data=loadData();
+ensureShiftCodeWorkTypeConsistency();
+let lastSavedSnapshot = JSON.stringify(data);
+let firebaseLoaded = false;
+let firebaseLoadPromise = Promise.resolve(false);
+let firebaseSaveTimer = null;
+ensureKoreanFixedHolidays(new Date().getFullYear());
+
+
+function ensureShiftCodeWorkTypeConsistency(){
+  if(!Array.isArray(data.shiftCodes)) data.shiftCodes=[];
+  if(!Array.isArray(data.workTypes)) data.workTypes=[];
+
+  const defaults = [
+    {code:'D',name:'Day',startTime:'07:00',endTime:'15:00',desc:'주간근무'},
+    {code:'E',name:'Evening',startTime:'15:00',endTime:'23:00',desc:'저녁근무'},
+    {code:'N',name:'Night',startTime:'23:00',endTime:'07:00',desc:'야간근무'},
+    {code:'O',name:'Off',startTime:'',endTime:'',desc:'휴무'},
+    {code:'AL',name:'Annual Leave',startTime:'',endTime:'',desc:'연차'},
+    {code:'SL',name:'Sick Leave',startTime:'',endTime:'',desc:'병가'},
+    {code:'WO',name:'Wanted Off',startTime:'',endTime:'',desc:'희망휴무'}
+  ];
+
+  defaults.forEach(d=>{
+    const existing = data.shiftCodes.find(s=>String(s.code||'').toUpperCase()===d.code);
+    if(existing){
+      existing.id = existing.id || ('sc-'+d.code.toLowerCase());
+      existing.name = existing.name || d.name;
+      existing.startTime = existing.startTime || d.startTime;
+      existing.endTime = existing.endTime || d.endTime;
+      existing.desc = existing.desc || d.desc;
+    } else {
+      data.shiftCodes.push({id:'sc-'+d.code.toLowerCase(), ...d});
+    }
+  });
+
+  const codeToId = Object.fromEntries((data.shiftCodes||[]).filter(s=>s.code).map(s=>[String(s.code).toUpperCase(), s.id]));
+  (data.workTypes||[]).forEach(w=>{
+    if(!Array.isArray(w.allowedShiftCodeIds)){
+      w.allowedShiftCodeIds = String(w.allowedCodes || '').split(',').map(c=>c.trim().toUpperCase()).filter(Boolean).map(c=>codeToId[c]).filter(Boolean);
+    }
+    // 휴무/휴가 코드는 모든 근무유형에서 근무표 입력에 필요하므로 누락되어 있으면 자동 포함
+    ['O','AL','SL','WO'].forEach(code=>{
+      const id=codeToId[code];
+      if(id && !w.allowedShiftCodeIds.includes(id)) w.allowedShiftCodeIds.push(id);
+    });
+  });
+}
+
+
+function ensureDataDefaults(){
+  const base = defaultData();
+  if(!Array.isArray(data.users) || data.users.length===0) data.users = [...base.users];
+  if(!data.users.find(u=>u.role==='admin')) data.users.unshift(base.users[0]);
+  if(!data.users.find(u=>u.loginId==='ward51')) data.users.push(base.users[1]);
+  if(!data.users.find(u=>u.loginId==='ward52')) data.users.push(base.users[2]);
+
+  if(!Array.isArray(data.wards) || data.wards.length===0) data.wards = [...base.wards];
+  if(!Array.isArray(data.shiftCodes) || data.shiftCodes.length===0) data.shiftCodes = [...base.shiftCodes];
+  if(!Array.isArray(data.workTypes) || data.workTypes.length===0) data.workTypes = [...base.workTypes];
+  if(!Array.isArray(data.placementRules) || data.placementRules.length===0) data.placementRules = [...base.placementRules];
+  if(!Array.isArray(data.globalHolidays)) data.globalHolidays = [...base.globalHolidays];
+  if(!data.commonScheduleSettings) data.commonScheduleSettings = {...base.commonScheduleSettings};
+  if(!Array.isArray(data.generationRules)) data.generationRules = [...base.generationRules];
+  if(!Array.isArray(data.systemEvents)) data.systemEvents = [...base.systemEvents];
+  if(!Array.isArray(data.changeRequests)) data.changeRequests = [];
+
+  data.shiftCodes = (data.shiftCodes||[]).map(s => ({
+    id:s.id || ('sc-'+Math.random().toString(36).slice(2)),
+    code:s.code || '',
+    name:s.name || '',
+    startTime:s.startTime || '',
+    endTime:s.endTime || '',
+    desc:s.desc || ''
+  }));
+  (data.workTypes||[]).forEach(w=>{
+    if(!Array.isArray(w.allowedShiftCodeIds)){
+      w.allowedShiftCodeIds = String(w.allowedCodes || '').split(',').map(c=>c.trim()).filter(Boolean)
+        .map(code => (data.shiftCodes||[]).find(sc => sc.code===code)?.id).filter(Boolean);
+    }
+  });
+  (data.wards||[]).forEach(w=>{
+    if(!w.calendarEvents) w.calendarEvents=[];
+    if(!w.additionalOffByMonth) w.additionalOffByMonth={};
+    if(!w.requests) w.requests=[];
+    if(!w.schedule) w.schedule={};
+    if(!w.leaveRequests) w.leaveRequests = Array.isArray(w.requests) ? [...w.requests] : [];
+    (w.nurses||[]).forEach(n=>{
+      if(!Array.isArray(n.workTypeIds)) n.workTypeIds = Array.isArray(n.selectedWorkTypes) ? [...n.selectedWorkTypes] : [];
+      if(!Array.isArray(n.placementRuleIds)) n.placementRuleIds = Array.isArray(n.selectedPlacementRules) ? [...n.selectedPlacementRules] : [];
+    });
+  });
+}
+
+async function loadFirebaseDataOnStart(){
+  if(!window.nurseDb){
+    firebaseLoaded = false;
+    return false;
+  }
+  try{
+    const snap = await window.nurseDb.ref(window.NURSE_DB_PATH).get();
+    if(snap.exists()){
+      const remote = snap.val();
+      if(remote && typeof remote === 'object'){
+        data = remote;
+        ensureDataDefaults();
+        ensureShiftCodeWorkTypeConsistency();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); // 오프라인 임시 백업
+        lastSavedSnapshot = JSON.stringify(data);
+        ensureKoreanFixedHolidays(new Date().getFullYear());
+      }
+    } else {
+      data = defaultData();
+      ensureDataDefaults();
+      ensureShiftCodeWorkTypeConsistency();
+      ensureKoreanFixedHolidays(new Date().getFullYear());
+      await window.nurseDb.ref(window.NURSE_DB_PATH).set(data);
+      lastSavedSnapshot = JSON.stringify(data);
+      localStorage.setItem(STORAGE_KEY, lastSavedSnapshot);
+    }
+    firebaseLoaded = true;
+    return true;
+  }catch(e){
+    firebaseLoaded = false;
+    console.warn('Firebase 데이터 불러오기 실패:', e);
+    return false;
+  }
+}
+
+function ensureFirebaseReady(){
+  if(firebaseLoaded) return Promise.resolve(true);
+  if(window.nurseFirebaseReady) return window.nurseFirebaseReady;
+  if(window.nurseDb) return loadFirebaseDataOnStart();
+  return new Promise(resolve=>{
+    let tries=0;
+    const timer=setInterval(()=>{
+      tries++;
+      if(window.nurseDb){
+        clearInterval(timer);
+        loadFirebaseDataOnStart().then(resolve);
+      } else if(tries>50){
+        clearInterval(timer);
+        resolve(false);
+      }
+    },100);
+  });
+}
+
+function watchFirebaseData(){
+  if(!window.nurseDb) return;
+  try{
+    window.nurseDb.ref(window.NURSE_DB_PATH).on('value', function(snapshot){
+      if(!snapshot.exists()) return;
+      const incoming = snapshot.val();
+      if(!incoming || typeof incoming !== 'object') return;
+      const incomingText = JSON.stringify(incoming);
+      if(incomingText === lastSavedSnapshot) return;
+      data = incoming;
+      ensureDataDefaults();
+      const fixedText = JSON.stringify(data);
+      localStorage.setItem(STORAGE_KEY, fixedText);
+      lastSavedSnapshot = fixedText;
+      if(currentUser){
+        const refreshed = (data.users||[]).find(u => u.loginId === currentUser.loginId && u.role === currentUser.role);
+        if(refreshed) currentUser = refreshed;
+        renderApp();
+        popup('Firebase 데이터가 반영되었습니다.');
+      }
+    });
+  }catch(e){
+    console.warn('Firebase 실시간 동기화 실패:', e);
+  }
+}
+
+
+
+
+function getLunarMonthDay(dateObj){
+  try{
+    const fmt = new Intl.DateTimeFormat('en-u-ca-chinese', { month:'numeric', day:'numeric' });
+    const parts = fmt.formatToParts(dateObj);
+    const month = parts.find(p=>p.type==='month')?.value || '';
+    const day = parts.find(p=>p.type==='day')?.value || '';
+    const m = String(month).replace(/[^0-9]/g,'');
+    const d = String(day).replace(/[^0-9]/g,'');
+    if(!m || !d) return null;
+    return { month:Number(m), day:Number(d) };
+  }catch(e){
+    return null;
+  }
+}
+function ensureKoreanFixedHolidays(year){
+  if(!Array.isArray(data.globalHolidays)) data.globalHolidays = [];
+
+  // remove previously auto-seeded holidays for this year only, keep manual additions intact
+  data.globalHolidays = data.globalHolidays.filter(h => !(h.auto && String(h.date||'').startsWith(`${year}-`)));
+
+  const fixed = [
+    {md:'01-01', type:'법정공휴일', note:'신정'},
+    {md:'03-01', type:'법정공휴일', note:'삼일절'},
+    {md:'05-05', type:'법정공휴일', note:'어린이날'},
+    {md:'06-06', type:'법정공휴일', note:'현충일'},
+    {md:'08-15', type:'법정공휴일', note:'광복절'},
+    {md:'10-03', type:'법정공휴일', note:'개천절'},
+    {md:'10-09', type:'법정공휴일', note:'한글날'},
+    {md:'12-25', type:'법정공휴일', note:'기독탄신일'}
+  ];
+
+  fixed.forEach(h => {
+    const date = `${year}-${h.md}`;
+    const exists = data.globalHolidays.find(x => x.date === date);
+    if(!exists){
+      data.globalHolidays.push({date, type:h.type, note:h.note, auto:true});
+    }
+  });
+
+  // Automatically seed lunar-based official holidays:
+  // Seollal eve/day/day after, Buddha's Birthday, Chuseok eve/day/day after
+  for(let month=1; month<=12; month++){
+    const lastDay = new Date(year, month, 0).getDate();
+    for(let day=1; day<=lastDay; day++){
+      const dt = new Date(year, month-1, day);
+      const next = new Date(year, month-1, day+1);
+      const lunar = getLunarMonthDay(dt);
+      const lunarNext = getLunarMonthDay(next);
+      if(!lunar) continue;
+
+      const date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+      let holidayMeta = null;
+
+      // 설날 전날: 음력 12월 말일 -> 다음날이 음력 1월 1일
+      if(lunar.month === 12 && lunarNext && lunarNext.month === 1 && lunarNext.day === 1){
+        holidayMeta = { type:'법정공휴일', note:'설날 전날' };
+      }
+      // 설날 / 다음날
+      else if(lunar.month === 1 && lunar.day === 1){
+        holidayMeta = { type:'법정공휴일', note:'설날' };
+      }
+      else if(lunar.month === 1 && lunar.day === 2){
+        holidayMeta = { type:'법정공휴일', note:'설날 다음날' };
+      }
+      // 부처님오신날
+      else if(lunar.month === 4 && lunar.day === 8){
+        holidayMeta = { type:'법정공휴일', note:'부처님오신날' };
+      }
+      // 추석 전날/당일/다음날
+      else if(lunar.month === 8 && lunar.day === 14){
+        holidayMeta = { type:'법정공휴일', note:'추석 전날' };
+      }
+      else if(lunar.month === 8 && lunar.day === 15){
+        holidayMeta = { type:'법정공휴일', note:'추석' };
+      }
+      else if(lunar.month === 8 && lunar.day === 16){
+        holidayMeta = { type:'법정공휴일', note:'추석 다음날' };
+      }
+
+      if(holidayMeta){
+        const exists = data.globalHolidays.find(x => x.date === date);
+        if(!exists){
+          data.globalHolidays.push({ date, ...holidayMeta, auto:true });
+        }
+      }
+    }
+  }
+}
+function ensureHolidaySeedsForVisibleYear(){
+  ensureKoreanFixedHolidays(uiYear);
+}
+
+function getHolidayEntriesForMonth(y,m){
+  return (data.globalHolidays||[]).filter(h => h.date && h.date.startsWith(`${y}-${pad(m)}`));
+}
+function getHolidayEntryByDate(date){
+  return (data.globalHolidays||[]).find(h => h.date===date);
+}
+function getHolidayMemoByDate(date){
+  const h = getHolidayEntryByDate(date);
+  if(!h) return '';
+  return h.note ? `${h.type || '공휴일'}: ${h.note}` : (h.type || '공휴일');
+}
+function getDayNumberClass(y,m,d){
+  const t=getDateType(y,m,d);
+  if(t==='holiday') return 'date-holiday';
+  const dow=new Date(y,m-1,d).getDay();
+  if(dow===6) return 'date-sat';
+  if(dow===0) return 'date-sun';
+  return '';
+}
+function getDowLabel(y,m,d){
+  return ['일','월','화','수','목','금','토'][new Date(y,m-1,d).getDay()];
+}
+function getDowClass(y,m,d){
+  const t=getDateType(y,m,d);
+  if(t==='holiday') return 'dow-holiday';
+  const dow=new Date(y,m-1,d).getDay();
+  if(dow===6) return 'dow-sat';
+  if(dow===0) return 'dow-sun';
+  return '';
+}
+function syncAdditionalOffCountFromHolidayEntries(ward,y,m){
+  const count=getHolidayEntriesForMonth(y,m).length;
+  if(!ward.additionalOffByMonth) ward.additionalOffByMonth={};
+  ward.additionalOffByMonth[monthKey(y,m)] = count;
+  return count;
+}
+
+function defaultData(){
+  return {
+    globalHolidays:[
+      {date:'2026-05-05',type:'법정공휴일',note:'어린이날'},
+      {date:'2026-05-25',type:'대체공휴일',note:'대체공휴일'}
+    ],
+    commonScheduleSettings:{ defaultMaxNightPerMonth:6, defaultMaxConsecutiveDays:5, balanceDEN:true, balanceTeams:true, rotateNight:true, reduceNightForMarked:true, wantedOffFirst:true, enforceMinStaffing:true, fillRemainingWithWork:true, allowWantedOffOverTarget:true },
+    generationRules:[
+      {id:'gr-1', name:'원티드 off 무조건 반영', key:'wantedOffFirst', enabled:true, priority:1},
+      {id:'gr-2', name:'근무 shift 최소인원 충족 우선', key:'enforceMinStaffing', enabled:true, priority:2},
+      {id:'gr-3', name:'D/E/N 균등 배분', key:'balanceDEN', enabled:true, priority:3},
+      {id:'gr-4', name:'최소인원 충족 후 남는 인원은 근무로 채우기', key:'fillRemainingWithWork', enabled:true, priority:4},
+      {id:'gr-5', name:'원티드 off는 최종 off 초과 허용', key:'allowWantedOffOverTarget', enabled:true, priority:5},
+      {id:'gr-6', name:'팀별 균형', key:'balanceTeams', enabled:true, priority:6}
+    ],
+    workTypes:[
+      {id:'wt-three',name:'3교대',allowedCodes:'D,E,N,O,AL,SL,WO',weekendRestricted:false,satRestricted:false,holidayRestricted:false},
+      {id:'wt-daykeep',name:'데이 킵',allowedCodes:'D,O,AL,SL,WO',weekendRestricted:false,satRestricted:false,holidayRestricted:false},
+      {id:'wt-nightkeep',name:'나이트킵',allowedCodes:'N,O,AL,SL,WO',weekendRestricted:false,satRestricted:false,holidayRestricted:false},
+      {id:'wt-office',name:'상근',allowedCodes:'D,O,AL,SL,WO',weekendRestricted:true,satRestricted:false,holidayRestricted:true},
+      {id:'wt-pregnant',name:'임신근로',allowedCodes:'D,O,AL,SL,WO',weekendRestricted:false,satRestricted:false,holidayRestricted:false},
+      {id:'wt-short6',name:'6시간 단축근무',allowedCodes:'SD6,O,AL,SL,WO',weekendRestricted:false,satRestricted:false,holidayRestricted:false}
+    ],
+    placementRules:[
+      {id:'pl-new',name:'신규',satRestricted:false,holidayRestricted:false,weekendRestricted:false},
+      {id:'pl-sat-restrict',name:'토요일 제한',satRestricted:true,holidayRestricted:false,weekendRestricted:false},
+      {id:'pl-holiday-restrict',name:'공휴일 제한',satRestricted:false,holidayRestricted:true,weekendRestricted:false}
+    ],
+    shiftCodes:[
+      {id:'c1',code:'D',name:'Day',startTime:'07:00',endTime:'15:00',desc:'주간근무'},
+      {id:'c2',code:'E',name:'Evening',startTime:'15:00',endTime:'23:00',desc:'저녁근무'},
+      {id:'c3',code:'N',name:'Night',startTime:'23:00',endTime:'07:00',desc:'야간근무'},
+      {id:'c4',code:'O',name:'Off',startTime:'',endTime:'',desc:'휴무'},
+      {id:'c5',code:'AL',name:'Annual Leave',startTime:'',endTime:'',desc:'연차'},
+      {id:'c6',code:'SL',name:'Sick Leave',startTime:'',endTime:'',desc:'병가'},
+      {id:'c7',code:'SD6',name:'6시간 근무',startTime:'09:00',endTime:'15:00',desc:'6시간 근무'},
+      {id:'c8',code:'WO',name:'Wanted Off',startTime:'',endTime:'',desc:'희망휴무'}
+    ],
+    users:[
+      {id:'u-admin',loginId:'admin',password:'1234',role:'admin',wardId:null,name:'전체 관리자'},
+      {id:'u1',loginId:'ward51',password:'1234',role:'ward',wardId:'ward-1',name:'51병동 수간호사'},
+      {id:'u2',loginId:'ward52',password:'1234',role:'ward',wardId:'ward-2',name:'52병동 수간호사'}
+    ],
+    wards:[
+      {id:'ward-1',name:'51병동',shiftsRequired:{D:3,E:2,N:2},nurses:[
+        {id:'n1',name:'김간호',team:'A',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-three'],selectedPlacementRules:[],maxNightPerMonth:6,maxConsecutiveDays:5,notes:''},
+        {id:'n2',name:'박야간',team:'B',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-nightkeep'],selectedPlacementRules:[],maxNightPerMonth:12,maxConsecutiveDays:4,notes:'나이트 전담'},
+        {id:'n3',name:'이단축',team:'C',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-pregnant','wt-short6'],selectedPlacementRules:['pl-sat-restrict','pl-holiday-restrict'],maxNightPerMonth:0,maxConsecutiveDays:4,notes:'임신근로자 / 6시간 단축'}
+      ],requests:[
+        {id:'r1',nurseId:'n1',date:'2026-05-10',type:'WO',priority:'preferred',note:'가족행사'}
+      ],schedule:{},additionalOffByMonth:{},calendarEvents:[]},
+      {id:'ward-2',name:'52병동',shiftsRequired:{D:2,E:2,N:1},nurses:[
+        {id:'n4',name:'최주간',team:'A',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-three'],selectedPlacementRules:[],maxNightPerMonth:5,maxConsecutiveDays:5,notes:''},
+        {id:'n5',name:'정야간',team:'B',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-nightkeep'],selectedPlacementRules:[],maxNightPerMonth:14,maxConsecutiveDays:4,notes:'52병동 나이트 전담'}
+      ],requests:[],schedule:{},additionalOffByMonth:{},calendarEvents:[]}
+    ],
+    systemEvents:[
+      {id:'se1',date:'2026-05-15',title:'간호부 전체 회의',type:'hospital',shareAll:true,createdBy:'admin'}
+    ],
+    changeRequests:[
+      {id:'cr1',wardId:'ward-1',wardName:'51병동',category:'근무코드',title:'MD 코드 추가 요청',detail:'임신근로자 전용 MD 코드를 추가해 주세요.',status:'pending',createdAt:new Date().toISOString()}
+    ]
+  };
+}
+function loadData(){
+  let raw=localStorage.getItem(STORAGE_KEY);
+  if(!raw){ for(const k of legacyKeys){ const c=localStorage.getItem(k); if(c){ raw=c; break; } } }
+  const base=defaultData();
+  if(!raw) return base;
+  try{
+    const parsed=JSON.parse(raw);
+    parsed.users = Array.isArray(parsed.users) ? parsed.users : base.users;
+    parsed.wards = Array.isArray(parsed.wards) ? parsed.wards : base.wards;
+    parsed.globalHolidays = Array.isArray(parsed.globalHolidays) ? parsed.globalHolidays : base.globalHolidays;
+    parsed.globalHolidays = parsed.globalHolidays.map(h => typeof h === 'string' ? ({date:h,type:'공휴일',note:''}) : h);
+    parsed.commonScheduleSettings = Object.assign({}, base.commonScheduleSettings, parsed.commonScheduleSettings || {});
+    parsed.generationRules = Array.isArray(parsed.generationRules) ? parsed.generationRules : (base.generationRules || []);
+    parsed.generationRules = parsed.generationRules.map((r,idx)=>({
+      id:r.id || ('gr-'+Math.random().toString(36).slice(2)),
+      name:r.name || '',
+      key:r.key || '',
+      enabled:(typeof r.enabled==='boolean' ? r.enabled : true),
+      priority:Number(r.priority || (idx+1))
+    }));
+    parsed.generationRules.sort((a,b)=>Number(a.priority||999)-Number(b.priority||999));
+    (parsed.generationRules||[]).forEach((r,idx)=>{ r.priority=idx+1; });
+    (parsed.generationRules||[]).forEach(r=>{ if(r.key) parsed.commonScheduleSettings[r.key]=!!r.enabled; });
+    parsed.workTypes = Array.isArray(parsed.workTypes) ? parsed.workTypes : base.workTypes;
+    parsed.placementRules = Array.isArray(parsed.placementRules) ? parsed.placementRules : base.placementRules;
+    parsed.shiftCodes = Array.isArray(parsed.shiftCodes) ? parsed.shiftCodes : base.shiftCodes;
+    parsed.shiftCodes = parsed.shiftCodes.map(s => ({
+      id:s.id || ('sc-'+Math.random().toString(36).slice(2)),
+      code:s.code || '',
+      name:s.name || '',
+      startTime:s.startTime || '',
+      endTime:s.endTime || '',
+      desc:s.desc || ''
+    }));
+    parsed.systemEvents = Array.isArray(parsed.systemEvents) ? parsed.systemEvents : base.systemEvents;
+
+    // 근무유형/배치기준 보정: 기존 저장값이 비어 있거나 예전 형식이어도 기본값과 추가값이 모두 보이게 유지
+    function normalizeWorkTypeList(list){
+      return (Array.isArray(list) ? list : []).filter(w => w && w.name).map(w => {
+        const allowedShiftCodeIds = Array.isArray(w.allowedShiftCodeIds) ? w.allowedShiftCodeIds :
+          String(w.allowedCodes || '').split(',').map(c=>c.trim()).filter(Boolean)
+            .map(code => (parsed.shiftCodes||[]).find(sc => sc.code===code)?.id).filter(Boolean);
+        return {
+          id:w.id || ('wt-'+Math.random().toString(36).slice(2)),
+          name:w.name || '',
+          code:w.code || '',
+          allowedShiftCodeIds,
+          startTime:w.startTime || '',
+          endTime:w.endTime || '',
+          weekendRestricted:!!w.weekendRestricted,
+          satRestricted:!!w.satRestricted,
+          holidayRestricted:!!w.holidayRestricted
+        };
+      });
+    }
+    const savedWorkTypes = normalizeWorkTypeList(parsed.workTypes);
+    const baseWorkTypes = normalizeWorkTypeList(base.workTypes);
+    parsed.workTypes = [...baseWorkTypes];
+    savedWorkTypes.forEach(w => {
+      const same = parsed.workTypes.find(x => x.id===w.id || (x.name===w.name && x.code===w.code));
+      if(same) Object.assign(same, w); else parsed.workTypes.push(w);
+    });
+
+    function normalizePlacementList(list){
+      return (Array.isArray(list) ? list : []).filter(w => w && w.name).map((w,idx) => ({
+        id:w.id || ('pr-'+Math.random().toString(36).slice(2)),
+        name:w.name || '',
+        priority:Number(w.priority || (idx+1)),
+        satRestricted:!!w.satRestricted,
+        holidayRestricted:!!w.holidayRestricted,
+        weekendRestricted:!!w.weekendRestricted
+      }));
+    }
+    const savedPlacementRules = normalizePlacementList(parsed.placementRules);
+    const basePlacementRules = normalizePlacementList(base.placementRules);
+    parsed.placementRules = [...basePlacementRules];
+    savedPlacementRules.forEach(w => {
+      const same = parsed.placementRules.find(x => x.id===w.id || x.name===w.name);
+      if(same) Object.assign(same, w); else parsed.placementRules.push(w);
+    });
+    parsed.commonScheduleSettings = Object.assign({}, base.commonScheduleSettings, parsed.commonScheduleSettings || {});
+    parsed.generationRules = Array.isArray(parsed.generationRules) ? parsed.generationRules : (base.generationRules || []);
+    parsed.generationRules = parsed.generationRules.map((r,idx)=>({
+      id:r.id || ('gr-'+Math.random().toString(36).slice(2)),
+      name:r.name || '',
+      key:r.key || '',
+      enabled:(typeof r.enabled==='boolean' ? r.enabled : true),
+      priority:Number(r.priority || (idx+1))
+    }));
+    parsed.generationRules.sort((a,b)=>Number(a.priority||999)-Number(b.priority||999));
+    (parsed.generationRules||[]).forEach((r,idx)=>{ r.priority=idx+1; });
+    (parsed.generationRules||[]).forEach(r=>{ if(r.key) parsed.commonScheduleSettings[r.key]=!!r.enabled; });
+    parsed.changeRequests = Array.isArray(parsed.changeRequests) ? parsed.changeRequests : base.changeRequests;
+    parsed.wards.forEach(w=>{
+      if(!w.calendarEvents) w.calendarEvents=[];
+      if(!w.additionalOffByMonth) w.additionalOffByMonth={};
+      if(!w.requests) w.requests=[];
+      if(!w.schedule) w.schedule={};
+      if(!w.leaveRequests) w.leaveRequests = Array.isArray(w.requests) ? [...w.requests] : [];
+      if(!w.changeRequestsLocal) w.changeRequestsLocal = [];
+      (w.nurses||[]).forEach(n=>{
+        if(!Array.isArray(n.selectedWorkTypes)){
+          const wt=[];
+          if(n.isThreeShift) wt.push('wt-three');
+          if(n.isNightKeep) wt.push('wt-nightkeep');
+          if(n.isPregnant) wt.push('wt-pregnant');
+          if(n.isShortDuty6) wt.push('wt-short6');
+          if(wt.length===0) wt.push('wt-daykeep');
+          n.selectedWorkTypes=wt;
+        }
+        if(!Array.isArray(n.selectedPlacementRules)){
+          const pr=[];
+          if(n.isNewNurse) pr.push('pl-new');
+          if(n.weekendRestricted) pr.push('pl-sat-restrict');
+          if(n.holidayRestricted) pr.push('pl-holiday-restrict');
+          n.selectedPlacementRules=pr;
+        }
+        if(!Array.isArray(n.workTypeIds)) n.workTypeIds = Array.isArray(n.selectedWorkTypes) ? [...n.selectedWorkTypes] : [];
+        if(!Array.isArray(n.placementRuleIds)) n.placementRuleIds = Array.isArray(n.selectedPlacementRules) ? [...n.selectedPlacementRules] : [];
+        delete n.isThreeShift; delete n.isNightKeep; delete n.isPregnant; delete n.isShortDuty6; delete n.isNewNurse; delete n.weekendRestricted; delete n.holidayRestricted;
+      });
+    });
+    if(!parsed.users.find(u=>u.role==='admin')) parsed.users.unshift(base.users[0]);
+    if(!parsed.users.find(u=>u.loginId==='ward51')) parsed.users.push(base.users[1]);
+    if(!parsed.users.find(u=>u.loginId==='ward52')) parsed.users.push(base.users[2]);
+    return parsed;
+  }catch(e){ return base; }
+}
+function saveData(silent=false){
+  ensureDataDefaults();
+  ensureShiftCodeWorkTypeConsistency();
+  lastSavedSnapshot = JSON.stringify(data);
+  localStorage.setItem(STORAGE_KEY, lastSavedSnapshot); // 임시 백업용
+
+  const writeRemote = () => {
+    if(window.nurseDb && window.NURSE_DB_PATH){
+      try{
+        return window.nurseDb.ref(window.NURSE_DB_PATH).set(data).catch(function(e){
+          console.warn('Firebase 저장 실패:', e);
+          if(!silent) popup('Firebase 저장 실패: 네트워크 또는 DB 권한을 확인하세요.');
+        });
+      }catch(e){
+        console.warn('Firebase 저장 실패:', e);
+        if(!silent) popup('Firebase 저장 실패: 네트워크 또는 DB 권한을 확인하세요.');
+      }
+    } else {
+      if(!silent) popup('Firebase 연결 전입니다. 임시 저장 후 연결되면 다시 저장하세요.');
+    }
+  };
+
+  clearTimeout(firebaseSaveTimer);
+  firebaseSaveTimer = setTimeout(writeRemote, 80);
+  if(!silent) popup('저장되었습니다.');
+}
+
+function downloadJson(){ const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='nurse_shift_scheduler_backup.json'; a.click(); }
+function popup(msg){ const el=document.getElementById('popup'); el.textContent=msg; el.classList.remove('hidden'); setTimeout(()=>el.classList.add('hidden'),2600); }
+function pad(v){ return String(v).padStart(2,'0'); }
+function makeDateKey(y,m,d){ return `${y}-${pad(m)}-${pad(d)}`; }
+function monthKey(y,m){ return `${y}-${pad(m)}`; }
+function daysInMonth(y,m){ return new Date(y,m,0).getDate(); }
+function getWardById(id){ return data.wards.find(w=>w.id===id); }
+function normalizeWardStructure(ward){
+  if(!ward) return null;
+
+  if(!Array.isArray(ward.nurses)) ward.nurses = [];
+  if(!Array.isArray(ward.requests)) ward.requests = [];
+  if(!Array.isArray(ward.leaveRequests)) ward.leaveRequests = [];
+  if(!ward.schedule || typeof ward.schedule !== 'object') ward.schedule = {};
+  if(!ward.additionalOffByMonth || typeof ward.additionalOffByMonth !== 'object') ward.additionalOffByMonth = {};
+  if(!Array.isArray(ward.calendarEvents)) ward.calendarEvents = [];
+
+  if(!ward.staffingRules || typeof ward.staffingRules !== 'object'){
+    ward.staffingRules = {};
+  }
+
+  ['D','E','N'].forEach(code => {
+    if(!ward.staffingRules[code]){
+      ward.staffingRules[code] = { min: 0, max: 0 };
+    }
+  });
+
+  return ward;
+}
+function getCurrentWard(){
+  if(!currentUser || currentUser.role !== 'ward') return null;
+  const ward = getWardById(currentUser.wardId);
+  return normalizeWardStructure(ward);
+}
+function getDateType(y,m,d){
+  const key=makeDateKey(y,m,d);
+  if((data.globalHolidays||[]).some(h=>h.date===key)) return 'holiday';
+  const dow=new Date(y,m-1,d).getDay();
+  if(dow===0) return 'sun';
+  if(dow===6) return 'sat';
+  return 'weekday';
+}
+function holidayCountForMonth(y,m){
+  let count=0; const last=daysInMonth(y,m);
+  for(let d=1;d<=last;d++){ const t=getDateType(y,m,d); if(t!=='weekday') count++; }
+  return count;
+}
+function getAdditionalOff(ward,y,m){ return Number((ward.additionalOffByMonth||{})[monthKey(y,m)] || 0); }
+function getWorkTypeById(id){ return (data.workTypes||[]).find(x=>x.id===id); }
+function getPlacementRuleById(id){ return (data.placementRules||[]).find(x=>x.id===id); }
+function hasWorkType(n, name){
+  return (n.workTypeIds||[]).some(id => {
+    const w=(data.workTypes||[]).find(x=>x.id===id);
+    return w && String(w.name||'').trim()===name;
+  });
+}
+function hasPlacementRule(n, name){
+  return (n.placementRuleIds||[]).some(id => {
+    const w=(data.placementRules||[]).find(x=>x.id===id);
+    return w && String(w.name||'').trim()===name;
+  });
+}
+function nurseHasKeywordInWorkType(n, keywords){
+  return (n.workTypeIds||[]).some(id => {
+    const w=(data.workTypes||[]).find(x=>x.id===id);
+    const t=`${w?.name||''} ${w?.code||''}`.toLowerCase();
+    return keywords.some(k=>t.includes(k));
+  });
+}
+function getAllowedCodes(n){
+  if(n.employmentStatus && n.employmentStatus!=='active') return ['O','OF'];
+  const ids=[...new Set([...(Array.isArray(n.workTypeIds)?n.workTypeIds:[]), ...(Array.isArray(n.selectedWorkTypes)?n.selectedWorkTypes:[])])];
+  const selected=ids.map(id=>(data.workTypes||[]).find(w=>w.id===id)).filter(Boolean);
+  let codes=[];
+  selected.forEach(w=>{
+    if(Array.isArray(w.allowedShiftCodeIds) && w.allowedShiftCodeIds.length){
+      w.allowedShiftCodeIds.forEach(id=>{ const sc=getShiftCodeById(id); if(sc && sc.code) codes.push(String(sc.code).toUpperCase()); });
+    }
+    if(w.allowedCodes){
+      String(w.allowedCodes).split(',').map(c=>c.trim().toUpperCase()).filter(Boolean).forEach(c=>codes.push(c));
+    }
+  });
+  if(!codes.length){
+    if(nurseHasKeywordInWorkType(n,['night','나이트','nk'])) codes=['N'];
+    else if(nurseHasKeywordInWorkType(n,['day keep','daykeep','데이','상근','dk'])) codes=['D'];
+    else if(nurseHasKeywordInWorkType(n,['6시간','sd6','6h'])) codes=['SD6'];
+    else if(ids.length>0) codes=['D','E','N'];
+    else codes=['D'];
+  }
+  ['O','OF','AL','SL','WO'].forEach(c=>codes.push(c));
+  return [...new Set(codes)];
+}
+function getNurseConstraints(n){
+  const workIds=[...new Set([...(Array.isArray(n.workTypeIds)?n.workTypeIds:[]), ...(Array.isArray(n.selectedWorkTypes)?n.selectedWorkTypes:[])])];
+  const placeIds=[...new Set([...(Array.isArray(n.placementRuleIds)?n.placementRuleIds:[]), ...(Array.isArray(n.selectedPlacementRules)?n.selectedPlacementRules:[])])];
+  const workObjs=workIds.map(getWorkTypeById).filter(Boolean);
+  const placeObjs=placeIds.map(getPlacementRuleById).filter(Boolean);
+
+  function deepText(v, seen=new Set()){
+    if(v==null) return '';
+    if(typeof v==='string' || typeof v==='number' || typeof v==='boolean') return String(v);
+    if(typeof v!=='object') return '';
+    if(seen.has(v)) return '';
+    seen.add(v);
+    if(Array.isArray(v)) return v.map(x=>deepText(x,seen)).join(' ');
+    return Object.keys(v).map(k=>`${k} ${deepText(v[k],seen)}`).join(' ');
+  }
+  const rawText=[deepText(n), ...workObjs.map(x=>deepText(x)), ...placeObjs.map(x=>deepText(x))].join(' ').toLowerCase();
+  const norm=rawText.replace(/[\s,./·ㆍ()\[\]{}_:;~!@#$%^&*+=|\\?"'<>-]/g,'');
+  const has=(words)=>words.some(w=>norm.includes(String(w).toLowerCase().replace(/[\s,./·ㆍ()\[\]{}_:;~!@#$%^&*+=|\\?"'<>-]/g,'')));
+  const hasLimitWord=has(['제한','금지','불가','안됨','근무제한']);
+
+  const satByObj=workObjs.some(x=>x.satRestricted||x.weekendRestricted) || placeObjs.some(x=>x.satRestricted||x.weekendRestricted);
+  const holByObj=workObjs.some(x=>x.holidayRestricted) || placeObjs.some(x=>x.holidayRestricted);
+  const weekendByObj=workObjs.some(x=>x.weekendRestricted) || placeObjs.some(x=>x.weekendRestricted);
+
+  const satByName=(has(['토요일','토']) && hasLimitWord) || has(['토요일근무제한','토요일공휴일근무제한','토공휴일근무제한','토요일공휴일제한']);
+  const holByName=(has(['공휴일','휴일','일요일']) && hasLimitWord) || has(['토요일공휴일근무제한','토공휴일근무제한','토요일공휴일제한','일요일근무제한']);
+  const weekendByName=(has(['주말']) && hasLimitWord) || has(['주말근무제한']);
+  const newByName=has(['신규','신입','new']);
+  const reduceNightByName=(has(['나이트','야간','night']) && has(['적게','감소','줄임','제한']));
+
+  return {
+    weekendRestricted: !!(weekendByObj || weekendByName),
+    satRestricted: !!(satByObj || satByName || weekendByName),
+    holidayRestricted: !!(holByObj || holByName),
+    isNew: !!(placeObjs.some(x=>x.id==='pl-new') || newByName),
+    reduceNight: !!reduceNightByName,
+    rawText
+  };
+}
+
+function nurseProfile(n){
+  const arr=[];
+  (n.workTypeIds||[]).forEach(id=>{ const item=(data.workTypes||[]).find(w=>w.id===id); if(item) arr.push(item.name); });
+  (n.placementRuleIds||[]).forEach(id=>{ const item=(data.placementRules||[]).find(w=>w.id===id); if(item) arr.push(item.name); });
+  if(arr.length===0) arr.push('미지정');
+  return arr.join(' / ');
+}
+function summarizeSchedule(schedule,nurses,y,m){
+  const stats={}; 
+  nurses.forEach(n=>stats[n.id]={totalOff:0,weekendHolidayOff:0,nights:0,days:0,evenings:0,midDays:0,workDays:0});
+  for(let d=1;d<=daysInMonth(y,m);d++){
+    const key=makeDateKey(y,m,d), dateType=getDateType(y,m,d);
+    nurses.forEach(n=>{
+      const code=schedule[key]?.[n.id]||'';
+      if(['O','OF','AL','SL','WO'].includes(code)){ stats[n.id].totalOff++; if(dateType!=='weekday') stats[n.id].weekendHolidayOff++; }
+      if(code==='D') stats[n.id].days++;
+      if(code==='E') stats[n.id].evenings++;
+      if(code==='N') stats[n.id].nights++;
+      if(['MD','SD6'].includes(code)) stats[n.id].midDays++;
+      if(['D','E','N','MD','SD6'].includes(code)) stats[n.id].workDays++;
+    });
+  }
+  return stats;
+}
+function generateSchedule(ward,y,m){
+  ensureKoreanFixedHolidays(y);
+  normalizeWardStructure(ward);
+  const nurses=(ward.nurses||[]).filter(n=>n.employmentStatus!=='leave' && n.employmentStatus!=='inactive');
+  const last=daysInMonth(y,m), schedule={}, warnings=[];
+  const baseOff=holidayCountForMonth(y,m), addOff=getAdditionalOff(ward,y,m), targetOff=baseOff+addOff;
+  const workCodes=['D','E','N','MD','SD6'];
+  const offCodes=['O','OF','AL','SL','WO'];
+  const activeRules=getSortedGenerationRules().filter(r=>r.enabled!==false);
+
+  // 원칙 체계: 근무유형 + 배치기준은 절대 제한이며 공통 생성원칙보다 항상 먼저 적용됩니다.
+  // 공통 생성원칙은 자연어 이름을 내부 명령 코드로 변환해 실행합니다.
+  const ruleCommands=getActiveGenerationRuleCommands();
+  const opt={
+    wantedOffFirst: ruleCommands.wantedOffFirst!==false,
+    enforceMinStaffing: ruleCommands.enforceMinStaffing!==false,
+    balanceDEN: !!ruleCommands.balanceDEN,
+    fillRemainingWithWork: ruleCommands.fillRemainingWithWork!==false,
+    allowWantedOffOverTarget: !!ruleCommands.allowWantedOffOverTarget,
+    balanceTeams: !!ruleCommands.balanceTeams,
+    enforceNewNotAlone: ruleCommands.enforceNewNotAlone!==false,
+    excludeNewFromMinimum: !!ruleCommands.excludeNewFromMinimum
+  };
+  function staffingMin(){
+    return {
+      D:Number(ward.staffingRules?.D?.min ?? ward.shiftsRequired?.D ?? 0),
+      E:Number(ward.staffingRules?.E?.min ?? ward.shiftsRequired?.E ?? 0),
+      N:Number(ward.staffingRules?.N?.min ?? ward.shiftsRequired?.N ?? 0)
+    };
+  }
+  function staffingMax(){
+    function read(shift){
+      const v=Number(ward.staffingRules?.[shift]?.max ?? 0);
+      return v>0 ? v : Infinity;
+    }
+    return {D:read('D'),E:read('E'),N:read('N')};
+  }
+  const minNeed=staffingMin(), maxNeed=staffingMax();
+
+  const reqMap={};
+  [...(ward.requests||[]), ...(ward.leaveRequests||[])].forEach(r=>{
+    if(!r || !r.date || !r.nurseId) return;
+    if(!reqMap[r.date]) reqMap[r.date]={};
+    reqMap[r.date][r.nurseId]=r;
+  });
+
+  function allAllowedCodes(n){ return [...new Set(getAllowedCodes(n).map(c=>String(c).toUpperCase()))]; }
+  function allowedWorkCodes(n){ return allAllowedCodes(n).filter(c=>workCodes.includes(c)); }
+  function isThreeShiftEligible(n){
+    const codes=allAllowedCodes(n);
+    return ['D','E','N'].every(c=>codes.includes(c));
+  }
+  function isRestricted(n,dtype){
+    const c=getNurseConstraints(n);
+    return (dtype==='sat' && c.satRestricted) || ((dtype==='holiday'||dtype==='sun') && c.holidayRestricted) || ((dtype==='sat'||dtype==='sun'||dtype==='holiday') && c.weekendRestricted);
+  }
+  function dailyCount(date, shift){ return nurses.filter(n=>schedule[date]?.[n.id]===shift).length; }
+  function experiencedCount(date, shift){ return nurses.filter(n=>schedule[date]?.[n.id]===shift && !getNurseConstraints(n).isNew).length; }
+  function codeAt(day,nid){ return schedule[makeDateKey(y,m,day)]?.[nid]||''; }
+  function isOff(code){ return !code || offCodes.includes(code); }
+  function statNow(){ return summarizeSchedule(schedule,nurses,y,m); }
+
+  function consecutiveIf(n, day, shift){
+    let count=1;
+    for(let d=day-1; d>=1; d--){ const c=codeAt(d,n.id); if(workCodes.includes(c)) count++; else break; }
+    for(let d=day+1; d<=last; d++){ const c=codeAt(d,n.id); if(workCodes.includes(c)) count++; else break; }
+    return count;
+  }
+  function canPlace(n, shift, day, phase='extra', allowReplace=false){
+    const key=makeDateKey(y,m,day), dtype=getDateType(y,m,day);
+    const existing=schedule[key]?.[n.id]||'';
+
+    // 고정 휴가/원티드오프는 공통원칙보다 상위입니다.
+    if(['AL','SL'].includes(existing)) return false;
+    if(existing==='WO' && opt.wantedOffFirst) return false;
+    if(existing && !allowReplace) return false;
+
+    // 근무유형: 이 직원이 가능한 코드가 아니면 절대 배정하지 않습니다.
+    if(!allAllowedCodes(n).includes(shift)) return false;
+
+    // 배치기준: 제한일에는 어떤 공통원칙보다도 우선해서 근무 배정 금지입니다.
+    if(isRestricted(n,dtype)) return false;
+
+    // D/E/N 최대 인원은 최소인원보다 낮게 설정된 경우를 제외하고 넘기지 않습니다.
+    if(phase!=='newSupport' && ['D','E','N'].includes(shift) && dailyCount(key,shift) >= maxNeed[shift] && existing!==shift) return false;
+
+    const c=getNurseConstraints(n);
+    const stats=statNow();
+    const maxN=Number(n.maxNightPerMonth ?? data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6);
+    const maxC=Number(n.maxConsecutiveDays ?? data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5);
+    if(shift==='N' && (stats[n.id]?.nights||0) >= maxN && existing!=='N') return false;
+    if(maxC>0 && consecutiveIf(n,day,shift)>maxC) return false;
+    if(shift==='D' && codeAt(day-1,n.id)==='N') return false;
+    if(shift==='N' && codeAt(day+1,n.id)==='D') return false;
+
+    // 신규 원칙은 코드화된 공통 생성원칙으로 제어합니다.
+    // enforceNewNotAlone: 신규가 해당 shift에 혼자 배치되는 것만 금지
+    // excludeNewFromMinimum: 별도 원칙이 있을 때만 최소인원 후보에서 제외
+    if(phase==='minimum' && c.isNew && opt.excludeNewFromMinimum) return false;
+    if(c.isNew && opt.enforceNewNotAlone && ['D','E','N'].includes(shift) && experiencedCount(key,shift)===0) return false;
+    return true;
+  }
+  function score(n,shift,key,dtype,phase){
+    const stats=statNow();
+    const own=stats[n.id]||{};
+    const c=getNurseConstraints(n);
+    let s=0;
+    if(shift==='N') s += (own.nights||0)*80;
+    if(shift==='D') s += (own.days||0)*24;
+    if(shift==='E') s += (own.evenings||0)*24;
+    if(c.reduceNight && shift==='N') s += 800;
+    if(opt.balanceDEN && ['D','E','N'].includes(shift)){
+      const eligible=nurses.filter(x=>isThreeShiftEligible(x) && allAllowedCodes(x).includes(shift) && !isRestricted(x,dtype) && !getNurseConstraints(x).reduceNight);
+      const vals=eligible.map(x=> shift==='D' ? (stats[x.id]?.days||0) : shift==='E' ? (stats[x.id]?.evenings||0) : (stats[x.id]?.nights||0));
+      const avg=vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+      const current=shift==='D' ? (own.days||0) : shift==='E' ? (own.evenings||0) : (own.nights||0);
+      s += Math.max(0,current-avg)*70;
+    }
+    if(opt.balanceTeams && ['D','E','N'].includes(shift)) s += nurses.filter(x=>x.team===n.team && schedule[key]?.[x.id]===shift).length*30;
+    s += consecutiveIf(n,Number(key.slice(-2)),shift)*6;
+    return s + Math.random()*0.001;
+  }
+
+  // 0) 날짜별 빈 표 생성 + 고정 휴가/원티드오프 + 근무유형/배치기준 절대 제한 선반영
+  for(let d=1; d<=last; d++){
+    const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
+    schedule[key]={};
+    nurses.forEach(n=>{
+      const req=reqMap[key]?.[n.id];
+      if(req && ['AL','SL'].includes(req.type)) schedule[key][n.id]=req.type;
+      else if(req && req.type==='WO' && opt.wantedOffFirst) schedule[key][n.id]='WO';
+    });
+    nurses.forEach(n=>{
+      if(schedule[key][n.id]) return;
+      if(isRestricted(n,dtype)) schedule[key][n.id]='OF';
+      else {
+        const aw=allowedWorkCodes(n);
+        if(aw.length===1 && ['SD6','MD'].includes(aw[0])) schedule[key][n.id]=aw[0];
+      }
+    });
+  }
+
+  function fillMinimumStaffing(){
+    for(let d=1; d<=last; d++){
+      const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
+      ['N','D','E'].forEach(shift=>{
+        while(dailyCount(key,shift) < (minNeed[shift]||0)){
+          const candidates=nurses.filter(n=>canPlace(n,shift,d,'minimum')).sort((a,b)=>score(a,shift,key,dtype,'minimum')-score(b,shift,key,dtype,'minimum'));
+          if(!candidates.length) break;
+          schedule[key][candidates[0].id]=shift;
+        }
+      });
+    }
+  }
+  function fillRemainingWithWork(){
+    // 최소인원을 먼저 맞춘 뒤, 개인별 기준 OFF가 부족한 직원은 먼저 OFF로 둡니다.
+    // 즉 D 최소 2 / 최대 3이면 항상 3명을 채우는 것이 아니라,
+    // OFF 부족자가 있으면 D는 2명으로 유지될 수 있습니다.
+    for(let d=1; d<=last; d++){
+      const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
+      nurses.forEach(n=>{
+        if(schedule[key][n.id]) return;
+        const currentOff=statNow()[n.id]?.totalOff||0;
+        if(currentOff < targetOff){
+          schedule[key][n.id]='OF';
+          return;
+        }
+        const possible=allowedWorkCodes(n).filter(shift=>canPlace(n,shift,d,'extra')).sort((a,b)=>score(n,a,key,dtype,'extra')-score(n,b,key,dtype,'extra'));
+        schedule[key][n.id]=possible.length ? possible[0] : 'OF';
+      });
+    }
+  }
+  function canGiveUp(n,day,shift){
+    const key=makeDateKey(y,m,day);
+    // 같은 shift를 다른 직원에게 넘기는 swap에서는 일별 인원수가 유지되므로
+    // 최소인원 여부와 상관없이 현재 shift 보유자이면 교환 후보가 될 수 있습니다.
+    return schedule[key]?.[n.id]===shift;
+  }
+  function balanceShiftCounts(shift){
+    if(!opt.balanceDEN) return;
+    for(let iter=0; iter<500; iter++){
+      const stats=statNow();
+      const eligible=nurses.filter(n=>isThreeShiftEligible(n) && allAllowedCodes(n).includes(shift) && !getNurseConstraints(n).reduceNight);
+      if(eligible.length<2) return;
+      const countOf=n=> shift==='D' ? (stats[n.id]?.days||0) : shift==='E' ? (stats[n.id]?.evenings||0) : (stats[n.id]?.nights||0);
+      eligible.sort((a,b)=>countOf(a)-countOf(b));
+      const low=eligible[0], high=eligible[eligible.length-1];
+      if(countOf(high)-countOf(low)<=1) return;
+      let changed=false;
+      for(let d=1; d<=last && !changed; d++){
+        const key=makeDateKey(y,m,d);
+        if(!canGiveUp(high,d,shift)) continue;
+        const lowCode=schedule[key]?.[low.id]||'';
+        if(!isOff(lowCode)) continue;
+        if(!canPlace(low,shift,d,'extra',true)) continue;
+        if(getNurseConstraints(low).isNew && ['D','E','N'].includes(shift)){
+          const expAfter = experiencedCount(key,shift) - (!getNurseConstraints(high).isNew ? 1 : 0);
+          if(expAfter<=0) continue;
+        }
+        schedule[key][low.id]=shift;
+        schedule[key][high.id]='OF';
+        changed=true;
+      }
+      if(!changed) return;
+    }
+  }
+  function balanceDEN(){ ['N','D','E'].forEach(balanceShiftCounts); }
+
+  function repairNewNotAlone(){
+    if(!opt.enforceNewNotAlone) return;
+    for(let pass=0; pass<4; pass++){
+      let changed=false;
+      for(let d=1; d<=last; d++){
+        const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
+        ['D','E','N'].forEach(shift=>{
+          const newWorkers=nurses.filter(n=>getNurseConstraints(n).isNew && schedule[key]?.[n.id]===shift);
+          if(!newWorkers.length) return;
+          if(experiencedCount(key,shift)>0) return;
+          const stats=statNow();
+          const candidates=nurses
+            .filter(n=>!getNurseConstraints(n).isNew)
+            .filter(n=>['','O','OF'].includes(schedule[key]?.[n.id]||''))
+            .filter(n=>canPlace(n,shift,d,'newSupport',true))
+            .sort((a,b)=>{
+              const ao=stats[a.id]?.totalOff||0, bo=stats[b.id]?.totalOff||0;
+              if(bo!==ao) return bo-ao;
+              return score(a,shift,key,dtype,'newSupport')-score(b,shift,key,dtype,'newSupport');
+            });
+          if(candidates.length){
+            schedule[key][candidates[0].id]=shift;
+            changed=true;
+          }
+        });
+      }
+      if(!changed) break;
+    }
+  }
+
+  function balanceOffBySwaps(){
+    // OFF가 너무 많은 직원과 OFF가 부족한 직원을 같은 날짜/같은 shift로 교환합니다.
+    // 일별 D/E/N 인원은 그대로 유지하고, 근무유형/배치기준/신규 단독근무 금지는 계속 지킵니다.
+    for(let iter=0; iter<800; iter++){
+      const stats=statNow();
+      const overOff=nurses.filter(n=>(stats[n.id]?.totalOff||0)>targetOff).sort((a,b)=>(stats[b.id]?.totalOff||0)-(stats[a.id]?.totalOff||0));
+      const underOff=nurses.filter(n=>(stats[n.id]?.totalOff||0)<targetOff).sort((a,b)=>(stats[a.id]?.totalOff||0)-(stats[b.id]?.totalOff||0));
+      if(!overOff.length || !underOff.length) return;
+      let changed=false;
+      for(const needsWork of overOff){
+        for(const needsOff of underOff){
+          if(needsWork.id===needsOff.id) continue;
+          for(let d=1; d<=last && !changed; d++){
+            const key=makeDateKey(y,m,d);
+            const workCode=schedule[key]?.[needsOff.id]||'';
+            const offCode=schedule[key]?.[needsWork.id]||'';
+            if(!['D','E','N'].includes(workCode)) continue;
+            if(!isOff(offCode)) continue;
+            if(!canPlace(needsWork,workCode,d,'extra',true)) continue;
+            const c=getNurseConstraints(needsWork);
+            if(c.isNew && experiencedCount(key,workCode) - (schedule[key]?.[needsOff.id]===workCode ? 1 : 0) <= 0) continue;
+            if(['AL','SL','WO'].includes(offCode)) continue;
+            schedule[key][needsWork.id]=workCode;
+            schedule[key][needsOff.id]='OF';
+            changed=true;
+          }
+          if(changed) break;
+        }
+        if(changed) break;
+      }
+      if(!changed) return;
+    }
+  }
+
+  function addWorkForOverOffUpToMax(){
+    // 기준 OFF를 이미 초과한 직원은, 일별 최대 인원 범위 안에서 OF를 근무로 되돌립니다.
+    // 이렇게 해야 '기준 OFF가 채워지면 남은 일자는 근무 배치' 원칙이 실제로 작동합니다.
+    for(let iter=0; iter<800; iter++){
+      const stats=statNow();
+      const overOff=nurses.filter(n=>(stats[n.id]?.totalOff||0)>targetOff).sort((a,b)=>(stats[b.id]?.totalOff||0)-(stats[a.id]?.totalOff||0));
+      if(!overOff.length) return;
+      let changed=false;
+      for(const n of overOff){
+        for(let d=1; d<=last && !changed; d++){
+          const key=makeDateKey(y,m,d);
+          const existing=schedule[key]?.[n.id]||'';
+          if(!['','O','OF'].includes(existing)) continue;
+          const possible=allowedWorkCodes(n)
+            .filter(shift=>['D','E','N','MD','SD6'].includes(shift))
+            .filter(shift=>!['D','E','N'].includes(shift) || dailyCount(key,shift) < maxNeed[shift])
+            .filter(shift=>canPlace(n,shift,d,'extra',true))
+            .sort((a,b)=>score(n,a,key,getDateType(y,m,d),'extra')-score(n,b,key,getDateType(y,m,d),'extra'));
+          if(!possible.length) continue;
+          schedule[key][n.id]=possible[0];
+          changed=true;
+        }
+        if(changed) break;
+      }
+      if(!changed) return;
+    }
+  }
+
+  function reduceAboveMinimumForOffTarget(){
+    // 기준 OFF가 부족한 직원이 있을 때, 최소인원을 넘겨 배치된 근무는 OFF로 줄입니다.
+    // 예: D 최소 2 / 최대 3일 때 D가 3명이고 누군가 OFF 부족이면 D 1명을 OFF로 전환 가능.
+    for(let iter=0; iter<500; iter++){
+      const stats=statNow();
+      const underOff=nurses.filter(n=>(stats[n.id]?.totalOff||0)<targetOff).sort((a,b)=>(stats[a.id]?.totalOff||0)-(stats[b.id]?.totalOff||0));
+      if(!underOff.length) return;
+      let changed=false;
+      for(const n of underOff){
+        for(let d=1; d<=last && !changed; d++){
+          const key=makeDateKey(y,m,d);
+          const code=schedule[key]?.[n.id]||'';
+          if(!['D','E','N'].includes(code)) continue;
+          if(dailyCount(key,code) <= (minNeed[code]||0)) continue;
+          const hasNewSameShift=nurses.some(x=>getNurseConstraints(x).isNew && schedule[key]?.[x.id]===code);
+          const expAfter=experiencedCount(key,code) - (!getNurseConstraints(n).isNew ? 1 : 0);
+          if(hasNewSameShift && expAfter<=0) continue;
+          schedule[key][n.id]='OF';
+          changed=true;
+        }
+        if(changed) break;
+      }
+      if(!changed) return;
+    }
+  }
+
+  // 1) 공통 생성원칙은 우선순위대로 실행하되, 절대 제한은 항상 유지합니다.
+  const ran={min:false, fill:false, balance:false};
+  activeRules.forEach(r=>{
+    const t=`${r.name||''} ${r.key||''}`.toLowerCase();
+    if((t.includes('최소') || t.includes('enforceminstaffing') || t.includes('근무 shift')) && !ran.min){ fillMinimumStaffing(); ran.min=true; }
+    if((t.includes('남는') || t.includes('fillremainingwithwork') || t.includes('근무로 채우기')) && !ran.fill){ fillRemainingWithWork(); ran.fill=true; }
+    if((t.includes('균등') || t.includes('balance') || t.includes('3교대') || t.includes('d/e/n')) && !ran.balance){ balanceDEN(); ran.balance=true; }
+  });
+  if(opt.enforceMinStaffing && !ran.min) fillMinimumStaffing();
+  repairNewNotAlone();
+  if(opt.fillRemainingWithWork && !ran.fill) fillRemainingWithWork();
+  reduceAboveMinimumForOffTarget();
+  balanceOffBySwaps();
+  addWorkForOverOffUpToMax();
+  if(opt.balanceDEN && !ran.balance) balanceDEN();
+  repairNewNotAlone();
+  balanceOffBySwaps();
+  addWorkForOverOffUpToMax();
+
+  // 2) 최종 강제 수리: 절대 제한 위반 제거 후, 최소인원만 다시 보충
+  function repairHardConstraints(){
+    for(let pass=0; pass<6; pass++){
+      let changed=false;
+      for(let d=1; d<=last; d++){
+        const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
+        nurses.forEach(n=>{
+          const code=schedule[key]?.[n.id]||'';
+          if(workCodes.includes(code) && isRestricted(n,dtype)){ schedule[key][n.id]='OF'; changed=true; }
+          if(code && workCodes.includes(code) && !allAllowedCodes(n).includes(code)){ schedule[key][n.id]='OF'; changed=true; }
+        });
+        ['N','D','E'].forEach(shift=>{
+          while(dailyCount(key,shift) < (minNeed[shift]||0)){
+            const candidates=nurses.filter(n=>isOff(schedule[key]?.[n.id]) && canPlace(n,shift,d,'minimum',true)).sort((a,b)=>score(a,shift,key,dtype,'minimum')-score(b,shift,key,dtype,'minimum'));
+            if(!candidates.length) break;
+            schedule[key][candidates[0].id]=shift;
+            changed=true;
+          }
+        });
+      }
+      repairNewNotAlone();
+      if(!changed) break;
+    }
+  }
+  repairHardConstraints();
+  reduceAboveMinimumForOffTarget();
+  balanceOffBySwaps();
+  addWorkForOverOffUpToMax();
+  if(opt.balanceDEN) balanceDEN();
+  repairNewNotAlone();
+  balanceOffBySwaps();
+  addWorkForOverOffUpToMax();
+  repairHardConstraints();
+  addWorkForOverOffUpToMax();
+
+  function validateSchedule(){
+    const issues=[];
+    for(let d=1; d<=last; d++){
+      const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
+      ['D','E','N'].forEach(shift=>{
+        const cnt=dailyCount(key,shift);
+        if(cnt < (minNeed[shift]||0)) issues.push(`${key} ${shift} 인원 부족 (${cnt}/${minNeed[shift]})`);
+        if(maxNeed[shift]!==Infinity && cnt > maxNeed[shift]) issues.push(`${key} ${shift} 최대인원 초과 (${cnt}/${maxNeed[shift]})`);
+      });
+      nurses.forEach(n=>{
+        const code=schedule[key]?.[n.id]||'';
+        const c=getNurseConstraints(n);
+        if(workCodes.includes(code) && isRestricted(n,dtype)) issues.push(`${key} ${n.name} 배치기준 위반 (${code})`);
+        if(workCodes.includes(code) && !allAllowedCodes(n).includes(code)) issues.push(`${key} ${n.name} 근무유형 위반 (${code})`);
+        if(opt.enforceNewNotAlone && c.isNew && ['D','E','N'].includes(code) && experiencedCount(key,code)===0) issues.push(`${key} ${n.name} 신규 단독근무 위험 (${code})`);
+      });
+    }
+    if(opt.balanceDEN){
+      const stats=statNow();
+      ['D','E','N'].forEach(shift=>{
+        const vals=nurses.filter(n=>allAllowedCodes(n).includes(shift)&&!getNurseConstraints(n).reduceNight).map(n=> shift==='D' ? (stats[n.id]?.days||0) : shift==='E' ? (stats[n.id]?.evenings||0) : (stats[n.id]?.nights||0));
+        if(vals.length>1 && Math.max(...vals)-Math.min(...vals)>2) issues.push(`${shift} 균등 분배 확인 필요 (${Math.min(...vals)}~${Math.max(...vals)})`);
+      });
+    }
+    return issues;
+  }
+  warnings.push(...validateSchedule());
+  const stats=statNow();
+  return {schedule,warnings:[...new Set(warnings)],stats,targetOff,baseOff,addOff};
+}
+
+async function login(){
+  const id=document.getElementById('loginId').value.trim();
+  const pw=document.getElementById('loginPw').value;
+  const err=document.getElementById('loginError');
+  const btn=document.querySelector('#loginScreen button.primary');
+  if(btn){ btn.disabled=true; btn.textContent='로그인 중...'; }
+  if(err) err.classList.add('hidden');
+
+  try{
+    await ensureFirebaseReady();
+    ensureDataDefaults();
+    ensureShiftCodeWorkTypeConsistency();
+
+    const idLower=id.toLowerCase();
+    const user=(data.users||[]).find(u=>
+      String(u.loginId||'').toLowerCase()===idLower &&
+      String(u.password||'')===pw
+    );
+
+    if(!user){
+      if(err){
+        err.textContent='아이디 또는 비밀번호가 올바르지 않습니다.';
+        err.classList.remove('hidden');
+      } else {
+        alert('아이디 또는 비밀번호가 올바르지 않습니다.');
+      }
+      return;
+    }
+
+    if(user.role==='ward' && !getWardById(user.wardId)){
+      if(err){
+        err.textContent='계정에 연결된 부서를 찾을 수 없습니다. 전체 관리자에서 병동/계정 연결을 확인하세요.';
+        err.classList.remove('hidden');
+      }
+      return;
+    }
+
+    currentUser=user;
+    activeTab = (user.role==='admin' ? 'admin-calendar' : 'ward-calendar');
+    document.getElementById('loginScreen').classList.add('hidden');
+    document.getElementById('appScreen').classList.remove('hidden');
+    renderApp();
+  }catch(e){
+    console.error(e);
+    if(err){
+      err.textContent='로그인 중 오류가 발생했습니다. Firebase 연결과 DB 권한을 확인하세요.';
+      err.classList.remove('hidden');
+    }
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='로그인'; }
+  }
+}
+
+function logout(){ currentUser=null; activeTab=''; document.getElementById('appScreen').classList.add('hidden'); document.getElementById('loginScreen').classList.remove('hidden'); }
+function setTab(tab){ activeTab=tab; renderApp(); }
+
+function renderApp(){
+  ensureHolidaySeedsForVisibleYear();
+  const isAdmin=currentUser.role==='admin';
+  document.getElementById('appTitle').textContent=isAdmin?'전체 관리자 페이지':'병동 관리자 페이지';
+  document.getElementById('appSubtitle').textContent=isAdmin?`${currentUser.name} · 병동/계정/근무코드/공유일정/요청승인 관리`:`${currentUser.name} · ${(getCurrentWard()?.name || '연결 부서 없음')} 전용`;
+  renderTopStats();
+  renderTabs();
+  hideSections();
+
+  if(isAdmin){
+    if(!activeTab || activeTab.startsWith('ward-')) activeTab='admin-calendar';
+    const sec=document.getElementById('tab-'+activeTab);
+    if(sec) sec.classList.remove('hidden');
+    renderAdminOverview();
+    renderAdminWards();
+    renderAdminCodes();
+    renderAdminCalendar();
+    renderAdminGenerate();
+    renderAdminRequests();
+    if(typeof attachTimeSelectBehavior==='function') attachTimeSelectBehavior();
+  } else {
+    if(!activeTab || activeTab.startsWith('admin-')) activeTab='ward-calendar';
+    const sec=document.getElementById('tab-'+activeTab);
+    if(sec) sec.classList.remove('hidden');
+    renderWardCalendar();
+    renderWardSchedule();
+    renderWardLeave();
+    renderWardNurses();
+    renderWardChange();
+    if(typeof attachTimeSelectBehavior==='function') attachTimeSelectBehavior();
+  }
+}
+function hideSections(){
+  document.querySelectorAll('.section').forEach(el=>el.classList.add('hidden'));
+}
+function pill(t,v){ return `<div class="pill"><div class="t">${t}</div><div class="v">${v}</div></div>`; }
+
+function renderTopStats(){
+  const box=document.getElementById('topStats');
+  if(!box) return;
+  if(currentUser.role==='admin'){
+    const totalNurses=(data.wards||[]).reduce((sum,w)=>sum+((w.nurses||[]).length),0);
+    const pending=(data.changeRequests||[]).filter(r=>r.status==='pending').length;
+    const wardCount=(data.wards||[]).length;
+    const holidayCount=holidayCountForMonth(uiYear,uiMonth);
+    box.innerHTML=`
+      <div class="pill"><div class="t">병동 수</div><div class="v">${wardCount}</div></div>
+      <div class="pill"><div class="t">전체 간호사 수</div><div class="v">${totalNurses}</div></div>
+      <div class="pill"><div class="t">${uiYear}년 ${uiMonth}월 기본 off</div><div class="v">${holidayCount}</div></div>
+      <div class="pill"><div class="t">미처리 요청</div><div class="v">${pending}</div></div>
+    `;
+  } else {
+    const ward=getCurrentWard();
+    const nurses=(ward?.nurses||[]).length;
+    const baseOff=holidayCountForMonth(uiYear,uiMonth);
+    const addOff=Number((ward?.additionalOffByMonth||{})[monthKey(uiYear,uiMonth)]||0);
+    box.innerHTML=`
+      <div class="pill"><div class="t">병동</div><div class="v">${escapeHtml(ward?.name||'')}</div></div>
+      <div class="pill"><div class="t">간호사 수</div><div class="v">${nurses}</div></div>
+      <div class="pill"><div class="t">기본 off</div><div class="v">${baseOff}</div></div>
+      <div class="pill"><div class="t">추가 off (대체공휴일, 임시공휴일 시 반영)</div><div class="v">${addOff}</div></div>
+    `;
+  }
+}
+
+function renderTabs(){
+  let tabs=[];
+  if(currentUser.role==='admin'){
+    tabs=[
+      ['admin-calendar','공유 달력'],
+      ['admin-overview','근무현황'],
+      ['admin-wards','병동/계정 관리'],
+      ['admin-codes','근무유형/배치/공통설정'],
+      ['admin-generate','스케줄 생성'],
+      ['admin-requests',`요청함 ${data.changeRequests.filter(r=>r.status==='pending').length?`(${data.changeRequests.filter(r=>r.status==='pending').length})`:''}`]
+    ];
+  } else {
+    tabs=[
+      ['ward-calendar','병동 달력'],
+      ['ward-schedule','근무표'],
+      ['ward-leave','휴가신청'],
+      ['ward-nurses','근무자 명단 및 근무 형태'],
+      ['ward-change','관리자 요청']
+    ];
+  }
+  document.getElementById('tabs').innerHTML=tabs.map(([k,label])=>`<button class="tab ${activeTab===k?'active':''}" onclick="setTab('${k}')">${label}</button>`).join('');
+}
+
+function renderMonthCalendar(containerId, y, m, wardId=null, mode='view'){
+  const last=daysInMonth(y,m), firstDow=new Date(y,m-1,1).getDay();
+  let cells=[];
+  for(let i=0;i<firstDow;i++) cells.push('<div class="daycell"></div>');
+  for(let d=1;d<=last;d++){
+    const key=makeDateKey(y,m,d);
+    const holidayMemo=getHolidayMemoByDate(key);
+    let tags=`<div class="daymeta">${holidayMemo ? `<span class="holiday-note">${escapeHtml(holidayMemo)}</span>` : ''}</div>`;
+    const systemEvents=(data.systemEvents||[]).filter(e=>e.date===key);
+    const sharedWardEvents=getSharedWardEvents().filter(e=>e.date===key);
+    const wardObj=wardId?getWardById(wardId):null;
+    const ownWardPrivateEvents=wardObj ? (wardObj.calendarEvents||[]).filter(e=>e.date===key && !e.shareAll) : [];
+    const eventHtml=[
+      ...systemEvents.map(e=>`<div class="event hospital" onclick="manageEvent('system','${e.id}')" title="클릭하여 수정/삭제">${escapeHtml(formatEventLabel(e))}</div>`),
+      ...sharedWardEvents.map(e=>`<div class="event shared" onclick="${currentUser && currentUser.role==='admin' ? `manageEvent('ward','${e.id}','${e.sourceWardId}')` : (wardId===e.sourceWardId ? `manageEvent('ward','${e.id}','${e.sourceWardId}')` : 'return false')}" title="${currentUser && currentUser.role==='admin' ? '클릭하여 수정/삭제' : (wardId===e.sourceWardId ? '클릭하여 수정/삭제' : '공유 일정')}">${escapeHtml(formatEventLabel(e))}</div>`),
+      ...ownWardPrivateEvents.map(e=>`<div class="event" onclick="manageEvent('ward','${e.id}','${wardId||''}')" title="클릭하여 수정/삭제">${escapeHtml(formatEventLabel(e))}</div>`)
+    ].join('');
+    let addBox='';
+    if(mode==='edit'){
+      addBox=`<button aria-label="일정 추가" title="클릭하여 일정 추가" style="width:100%;height:18px;opacity:0;border:0;background:transparent;padding:0;margin:0" onclick="openEventPrompt('${key}','${wardId||''}','${containerId.includes('admin')?'admin':'ward'}')"></button>`;
+    }
+    cells.push(`<div class="daycell" ${mode==='edit' ? `onclick="if(event.target===this||event.target.tagName==='DIV'){openEventPrompt('${key}','${wardId||''}','${containerId.includes('admin')?'admin':'ward'})}"` : ''}><div class="daynum ${getDayNumberClass(y,m,d)}">${d}</div>${tags}${eventHtml}${addBox}</div>`);
+  }
+  document.getElementById(containerId).innerHTML=`
+    <div class="calendar">
+      <div class="calendar-head">
+        <div class="date-sun">일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div class="date-sat">토</div>
+      </div>
+      <div class="calendar-grid">${cells.join('')}</div>
+    </div>`;
+  attachTimeSelectBehavior();
+}
+function openEventPrompt(date, wardId, source){
+  const title = source==='admin' ? '공유달력 일정 등록' : '병동 일정 등록';
+  let body = `<div class="field"><div class="label">날짜</div><input id="modalEventDate" value="${date}" disabled></div>
+              <div style="height:12px"></div>
+              <div class="grid2">
+                <div class="field">
+                  <div class="label">시작 시간</div>
+                  <select id="modalEventStartTime" class="time-select" size="4">${getTimeOptionsHtml('')}</select>
+                  <div style="height:8px"></div>
+                  <input id="modalEventStartTimeText" placeholder="직접입력 예: 09:00">
+                </div>
+                <div class="field">
+                  <div class="label">종료 시간</div>
+                  <select id="modalEventEndTime" class="time-select" size="4">${getTimeOptionsHtml('')}</select>
+                  <div style="height:8px"></div>
+                  <input id="modalEventEndTimeText" placeholder="직접입력 예: 10:30">
+                </div>
+              </div>
+              <div style="height:12px"></div>
+              <div class="field"><div class="label">일정 제목</div><input id="modalEventTitle"></div>`;
+  if(source!=='admin'){
+    body += `<div style="height:12px"></div>
+             <label class="check-item"><input type="checkbox" id="modalShareAll"> <span>간호부 공유</span></label>`;
+  }
+  openModal(title, body, [
+    {label:'취소', action:'close'},
+    {label:'저장', action: function(){
+      const dateInput=document.getElementById('modalEventDate');
+      const startSelect=document.getElementById('modalEventStartTime');
+      const endSelect=document.getElementById('modalEventEndTime');
+      const startText=document.getElementById('modalEventStartTimeText');
+      const endText=document.getElementById('modalEventEndTimeText');
+      const titleInput=document.getElementById('modalEventTitle');
+      const eventDate=dateInput ? dateInput.value : date;
+      const startRaw=(startText?.value || '').trim() || (startSelect?.value || '');
+      const endRaw=(endText?.value || '').trim() || (endSelect?.value || '');
+      const startTime=normalizeTimeInput(startRaw);
+      const endTime=normalizeTimeInput(endRaw);
+      const eventTitle=titleInput ? titleInput.value.trim() : '';
+      if(!eventTitle){ alert('일정 제목을 입력하세요.'); return; }
+      if(startRaw && startTime===null){ alert('시작 시간을 HH:MM 형식으로 입력하세요. 예: 09:00'); return; }
+      if(endRaw && endTime===null){ alert('종료 시간을 HH:MM 형식으로 입력하세요. 예: 10:30'); return; }
+      if(startTime && endTime && startTime > endTime){ alert('종료 시간은 시작 시간보다 빠를 수 없습니다.'); return; }
+      if(source==='admin'){
+        data.systemEvents.push({id:'se-'+Date.now(),date:eventDate,startTime:startTime||'',endTime:endTime||'',title:eventTitle,type:'hospital',shareAll:true,createdBy:currentUser.loginId});
+        saveData(true); renderApp(); closeModal(); popup('공유달력 일정이 저장되어 병동 달력에 바로 반영되었습니다.');
+      } else {
+        const ward=getWardById(wardId);
+        const shareAll=!!document.getElementById('modalShareAll')?.checked;
+        ward.calendarEvents.push({id:'we-'+Date.now(),date:eventDate,startTime:startTime||'',endTime:endTime||'',title:eventTitle,shareAll,createdBy:currentUser.loginId});
+        saveData(true); renderApp(); closeModal(); popup(shareAll ? '병동 일정이 전체 병동 공유로 저장되었습니다.' : '병동 일정이 저장되었습니다.');
+      }
+    }, primary:true}
+  ]);
+}
+
+function manageEvent(kind, eventId, wardId=''){
+  let eventObj=null;
+  let isReadonlyForWard=false;
+  if(kind==='system'){
+    eventObj = data.systemEvents.find(e=>e.id===eventId);
+    if(currentUser && currentUser.role==='ward') isReadonlyForWard=true;
+  } else {
+    const ward = getWardById(wardId);
+    eventObj = ward ? (ward.calendarEvents||[]).find(e=>e.id===eventId) : null;
+  }
+  if(!eventObj) return;
+
+  let body = `<div class="field"><div class="label">날짜</div><input value="${eventObj.date || ''}" disabled></div>
+              <div style="height:12px"></div>
+              <div class="grid2">
+                <div class="field">
+                  <div class="label">시작 시간</div>
+                  <select id="modalEditStartTime" class="time-select" size="4" ${isReadonlyForWard?'disabled':''}>${getTimeOptionsHtml(eventObj.startTime || eventObj.time || '')}</select>
+                  <div style="height:8px"></div>
+                  <input id="modalEditStartTimeText" placeholder="직접입력 예: 09:00" value="${eventObj.startTime || eventObj.time || ''}" ${isReadonlyForWard?'disabled':''}>
+                </div>
+                <div class="field">
+                  <div class="label">종료 시간</div>
+                  <select id="modalEditEndTime" class="time-select" size="4" ${isReadonlyForWard?'disabled':''}>${getTimeOptionsHtml(eventObj.endTime || '')}</select>
+                  <div style="height:8px"></div>
+                  <input id="modalEditEndTimeText" placeholder="직접입력 예: 10:30" value="${eventObj.endTime || ''}" ${isReadonlyForWard?'disabled':''}>
+                </div>
+              </div>
+              <div style="height:12px"></div>
+              <div class="field"><div class="label">일정 제목</div><input id="modalEditTitle" value="${escapeHtml(eventObj.title)}" ${isReadonlyForWard?'disabled':''}></div>`;
+  if(kind==='ward'){
+    body += `<div style="height:12px"></div>
+             <label class="check-item"><input type="checkbox" id="modalEditShareAll" ${eventObj.shareAll?'checked':''}> <span>간호부 공유</span></label>`;
+  }
+  if(isReadonlyForWard){
+    body += `<div style="height:12px"></div><div class="alert">이 일정은 프로그램 관리자가 입력한 공유 일정이므로 병동 수간호사는 수정/삭제할 수 없습니다.</div>`;
+  }
+
+  const buttons = [{label:'닫기', action:'close'}];
+
+  if(!isReadonlyForWard){
+    buttons.push({label:'삭제', action:function(){
+      if(!confirm('이 일정을 삭제할까요?')) return;
+      if(kind==='system'){
+        data.systemEvents = data.systemEvents.filter(e=>e.id!==eventId);
+        saveData(true); renderApp(); closeModal(); popup('공유달력 일정이 삭제되었습니다.');
+      } else {
+        const ward=getWardById(wardId);
+        if(!ward) return;
+        ward.calendarEvents = (ward.calendarEvents||[]).filter(e=>e.id!==eventId);
+        saveData(true); renderApp(); closeModal(); popup('병동 일정이 삭제되었습니다.');
+      }
+    }});
+    buttons.push({label:'수정', action:function(){
+      const newTitle = document.getElementById('modalEditTitle')?.value.trim();
+      const startRaw=(document.getElementById('modalEditStartTimeText')?.value || '').trim() || (document.getElementById('modalEditStartTime')?.value || '');
+      const endRaw=(document.getElementById('modalEditEndTimeText')?.value || '').trim() || (document.getElementById('modalEditEndTime')?.value || '');
+      const newStart = normalizeTimeInput(startRaw);
+      const newEnd = normalizeTimeInput(endRaw);
+      if(!newTitle){ alert('일정 제목을 입력하세요.'); return; }
+      if(startRaw && newStart===null){ alert('시작 시간을 HH:MM 형식으로 입력하세요. 예: 09:00'); return; }
+      if(endRaw && newEnd===null){ alert('종료 시간을 HH:MM 형식으로 입력하세요. 예: 10:30'); return; }
+      if(newStart && newEnd && newStart > newEnd){ alert('종료 시간은 시작 시간보다 빠를 수 없습니다.'); return; }
+      eventObj.title = newTitle;
+      eventObj.startTime = newStart || '';
+      eventObj.endTime = newEnd || '';
+      delete eventObj.time;
+      if(kind==='ward'){
+        eventObj.shareAll = !!document.getElementById('modalEditShareAll')?.checked;
+      }
+      saveData(true); renderApp(); closeModal(); popup(kind==='system' ? '공유달력 일정이 수정되었습니다.' : '병동 일정이 수정되었습니다.');
+    }, primary:true});
+  }
+
+  openModal('일정 관리', body, buttons);
+}
+
+function openModal(title, bodyHtml, buttons){
+  const root=document.getElementById('modalRoot');
+  root.className='';
+  root.innerHTML = `<div class="modal-backdrop">
+      <div class="modal-card">
+        <div class="modal-title">${title}</div>
+        <div style="height:12px"></div>
+        <div>${bodyHtml}</div>
+        <div class="modal-actions" id="modalActions"></div>
+      </div>
+    </div>`;
+  const actions=root.querySelector('#modalActions');
+  buttons.forEach((btn, idx)=>{
+    const b=document.createElement('button');
+    b.textContent=btn.label;
+    if(btn.primary) b.className='primary';
+    b.onclick=()=>{
+      if(btn.action==='close') closeModal();
+      else if(typeof btn.action==='function') btn.action();
+    };
+    actions.appendChild(b);
+  });
+}
+function closeModal(){
+  const root=document.getElementById('modalRoot');
+  root.className='hidden';
+  root.innerHTML='';
+}
+
+
+
+function normalizeTimeInput(v){
+  const s = String(v||'').trim();
+  if(!s) return '';
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if(!m) return null;
+  let h = Number(m[1]), mm = Number(m[2]);
+  if(h<0 || h>23 || mm<0 || mm>59) return null;
+  return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+}
+function getSharedWardEvents(){
+  return data.wards.flatMap(w => (w.calendarEvents||[])
+    .filter(e => e.shareAll)
+    .map(e => ({...e, wardName:w.name, sourceWardId:w.id, sourceType:'ward-shared'})));
+}
+function getAllSharedEventsForDate(date){
+  const systemEvents = (data.systemEvents||[]).filter(e => e.date===date).map(e => ({...e, sourceType:'system'}));
+  const wardShared = getSharedWardEvents().filter(e => e.date===date);
+  return [...systemEvents, ...wardShared];
+}
+
+
+
+
+
+let draggedGenerationRuleId = null;
+function persistGenerationRuleOrderFromList(ids){
+  if(!Array.isArray(data.generationRules)) data.generationRules=[];
+  const order = ids.filter(Boolean);
+  data.generationRules.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
+  data.generationRules.forEach((r,idx)=>{ r.priority = idx+1; });
+  saveData(true);
+}
+function onGenerationRuleDragStart(id, ev){
+  draggedGenerationRuleId = id;
+  ev.dataTransfer.effectAllowed = 'move';
+  try{ ev.dataTransfer.setData('text/plain', id); }catch(e){}
+}
+function onGenerationRuleDragOver(id, ev){
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  const target = ev.currentTarget;
+  if(target) target.classList.add('drag-over');
+}
+function onGenerationRuleDragLeave(ev){
+  const target = ev.currentTarget;
+  if(target) target.classList.remove('drag-over');
+}
+function onGenerationRuleDrop(targetId, ev){
+  ev.preventDefault();
+  const dropEl = ev.currentTarget;
+  if(dropEl) dropEl.classList.remove('drag-over');
+  const sourceId = draggedGenerationRuleId || (function(){ try { return ev.dataTransfer.getData('text/plain'); } catch(e){ return ''; } })();
+  if(!sourceId || sourceId===targetId) return;
+  const list = getSortedGenerationRules().map(r=>r.id);
+  const from = list.indexOf(sourceId);
+  const to = list.indexOf(targetId);
+  if(from===-1 || to===-1) return;
+  const [moved] = list.splice(from,1);
+  list.splice(to,0,moved);
+  persistGenerationRuleOrderFromList(list);
+  draggedGenerationRuleId = null;
+  renderAdminGenerate();
+  popup('공통 생성 원칙 순서가 변경되었습니다.');
+}
+function onGenerationRuleDragEnd(ev){
+  draggedGenerationRuleId = null;
+  document.querySelectorAll('.generation-rule-item.drag-over').forEach(el=>el.classList.remove('drag-over'));
+}
+
+
+function normalizeRuleTextForCode(text){
+  return String(text||'').toLowerCase().replace(/[\s,./·ㆍ()\[\]{}_:;~!@#$%^&*+=|\\?"'<>-]/g,'');
+}
+function getGenerationRuleCommand(rule){
+  const name=normalizeRuleTextForCode((rule&&rule.name)||'');
+  const key=String((rule&&rule.key)||'');
+  if(key && !key.startsWith('customRule_')) return key;
+  if(name.includes('근무유형') || name.includes('배치기준') || name.includes('절대위반') || name.includes('절대위반하지')) return 'hardConstraints';
+  if(name.includes('원티드') || name.includes('wanted')) return 'wantedOffFirst';
+  if(name.includes('신규') && name.includes('최소인원') && (name.includes('제외') || name.includes('포함시키지'))) return 'excludeNewFromMinimum';
+  if(name.includes('신규') && (name.includes('단독') || name.includes('혼자'))) return 'enforceNewNotAlone';
+  if(name.includes('기준off') || name.includes('기준오프') || name.includes('남은일자') || name.includes('남는인원') || name.includes('근무로채우기')) return 'fillRemainingWithWork';
+  if(name.includes('최소인원') || name.includes('근무shift') || name.includes('shift최소')) return 'enforceMinStaffing';
+  if(name.includes('3교대') || name.includes('den') || name.includes('d/e/n') || name.includes('균등')) return 'balanceDEN';
+  if(name.includes('팀별')) return 'balanceTeams';
+  if(name.includes('off초과') || name.includes('오프초과') || name.includes('초과허용')) return 'allowWantedOffOverTarget';
+  return key || 'customRule';
+}
+function getActiveGenerationRuleCommands(){
+  const result={};
+  (getSortedGenerationRules()||[]).filter(r=>r.enabled!==false).forEach(r=>{
+    const cmd=getGenerationRuleCommand(r);
+    if(cmd && cmd!=='customRule') result[cmd]=true;
+  });
+  const css=data.commonScheduleSettings||{};
+  Object.keys(css).forEach(k=>{ if(css[k]!==false) result[k]=true; });
+  return result;
+}
+
+function getSortedGenerationRules(){
+  return [...(data.generationRules||[])].sort((a,b)=>Number(a.priority||999)-Number(b.priority||999));
+}
+function normalizeGenerationRulePriorities(){
+  getSortedGenerationRules().forEach((r,idx)=>{ r.priority=idx+1; });
+}
+function moveGenerationRule(id, direction){
+  const list=getSortedGenerationRules();
+  const idx=list.findIndex(r=>r.id===id);
+  if(idx===-1) return;
+  const newIdx=idx+direction;
+  if(newIdx<0 || newIdx>=list.length) return;
+  const temp=list[idx].priority;
+  list[idx].priority=list[newIdx].priority;
+  list[newIdx].priority=temp;
+  normalizeGenerationRulePriorities();
+  saveData(true);
+  renderAdminGenerate();
+  popup('공통 생성 원칙 우선순위가 변경되었습니다.');
+}
+function addGenerationRule(){
+  const name=document.getElementById('newGenerationRuleName')?.value.trim();
+  if(!name) return alert('공통 생성 원칙 이름을 입력하세요.');
+  if(!Array.isArray(data.generationRules)) data.generationRules=[];
+  const tmpRule={name, key:''};
+  const command=getGenerationRuleCommand(tmpRule);
+  const key=(command && command!=='customRule') ? command : 'customRule_'+Date.now();
+  data.generationRules.push({id:'gr-'+Date.now(), name, key, enabled:true, priority:(data.generationRules.length+1)});
+  data.commonScheduleSettings[key]=true;
+  saveData(true);
+  renderAdminGenerate();
+  popup('공통 생성 원칙이 추가되었습니다.');
+}
+function editGenerationRule(id){
+  const rule=(data.generationRules||[]).find(r=>r.id===id);
+  if(!rule) return;
+  const name=prompt('공통 생성 원칙 이름을 수정하세요.', rule.name||'');
+  if(!name) return;
+  rule.name=name.trim();
+  saveData(true);
+  renderAdminGenerate();
+}
+function deleteGenerationRule(id){
+  if(!confirm('공통 생성 원칙을 삭제할까요?')) return;
+  const rule=(data.generationRules||[]).find(r=>r.id===id);
+  data.generationRules=(data.generationRules||[]).filter(r=>r.id!==id);
+  normalizeGenerationRulePriorities();
+  if(rule?.key && rule.key.startsWith('customRule_')){
+    delete data.commonScheduleSettings[rule.key];
+  }
+  saveData(true);
+  renderAdminGenerate();
+  popup('공통 생성 원칙이 삭제되었습니다.');
+}
+function toggleGenerationRule(id, checked){
+  const rule=(data.generationRules||[]).find(r=>r.id===id);
+  if(!rule) return;
+  rule.enabled=checked;
+  if(rule.key) data.commonScheduleSettings[rule.key]=checked;
+  saveData(true);
+}
+
+function getSortedPlacementRules(){
+  return [...(data.placementRules||[])].sort((a,b)=>Number(a.priority||999)-Number(b.priority||999));
+}
+function normalizePlacementRulePriorities(){
+  getSortedPlacementRules().forEach((r,idx)=>{ r.priority = idx+1; });
+}
+function movePlacementRule(id, direction){
+  const list=getSortedPlacementRules();
+  const idx=list.findIndex(r=>r.id===id);
+  if(idx===-1) return;
+  const newIdx=idx+direction;
+  if(newIdx<0 || newIdx>=list.length) return;
+  const temp=list[idx].priority;
+  list[idx].priority=list[newIdx].priority;
+  list[newIdx].priority=temp;
+  normalizePlacementRulePriorities();
+  saveData(true);
+  renderAdminCodes();
+  popup('배치기준 우선순위가 변경되었습니다.');
+}
+function getPlacementRulePriorityName(ruleId){
+  const rule=(data.placementRules||[]).find(r=>r.id===ruleId);
+  return rule ? `${rule.name}(${rule.priority||''})` : '';
+}
+
+function formatShiftCodeTime(sc){
+  if(!sc) return '';
+  return (sc.startTime || sc.endTime) ? `${sc.startTime||''}~${sc.endTime||''}` : '';
+}
+function getShiftCodeById(id){
+  return (data.shiftCodes||[]).find(s=>s.id===id);
+}
+function getWorkTypeShiftCodes(workType){
+  const ids = Array.isArray(workType?.allowedShiftCodeIds) ? workType.allowedShiftCodeIds : [];
+  return ids.map(getShiftCodeById).filter(Boolean);
+}
+
+
+function getHalfHourOptionTags(selected=''){
+  let opts = '<option value="">선택</option>';
+  for(let h=0; h<24; h++){
+    for(let m=0; m<60; m+=30){
+      const hh=String(h).padStart(2,'0');
+      const mm=String(m).padStart(2,'0');
+      const val=`${hh}:${mm}`;
+      opts += `<option value="${val}" ${selected===val?'selected':''}>${val}</option>`;
+    }
+  }
+  return opts;
+}
+
+function getTimeOptionsHtml(selected=''){
+  let opts = '<option value="">시간 선택</option>';
+  for(let h=0; h<24; h++){
+    for(let m=0; m<60; m+=5){
+      const hh=String(h).padStart(2,'0');
+      const mm=String(m).padStart(2,'0');
+      const val=`${hh}:${mm}`;
+      opts += `<option value="${val}" ${selected===val?'selected':''}>${val}</option>`;
+    }
+  }
+  return opts;
+}
+function formatEventLabel(eventObj){
+  if(eventObj.startTime && eventObj.endTime) return `${eventObj.startTime}~${eventObj.endTime} ${eventObj.title}`;
+  if(eventObj.startTime) return `${eventObj.startTime} ${eventObj.title}`;
+  if(eventObj.time) return `${eventObj.time} ${eventObj.title}`;
+  return `${eventObj.title}`;
+}
+
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+
+function addHolidayEntry(){
+  const date=document.getElementById('holidayDateInput')?.value;
+  const type=document.getElementById('holidayTypeInput')?.value || '공휴일';
+  const note=document.getElementById('holidayNoteInput')?.value || '';
+  if(!date) return alert('날짜를 입력하세요.');
+  const existing=(data.globalHolidays||[]).find(h=>h.date===date);
+  if(existing){
+    existing.type=type;
+    existing.note=note;
+  } else {
+    data.globalHolidays.push({date,type,note});
+  }
+  data.wards.forEach(w=>syncAdditionalOffCountFromHolidayEntries(w, uiYear, uiMonth));
+  ensureHolidaySeedsForVisibleYear(); saveData(true); renderApp(); popup('추가 공휴일이 반영되었습니다.');
+}
+function deleteHolidayEntry(date){
+  if(!confirm('이 공휴일 항목을 삭제할까요?')) return;
+  data.globalHolidays=(data.globalHolidays||[]).filter(h=>h.date!==date);
+  (data.wards||[]).forEach(w=>{
+    if(!w.additionalOffByMonth) w.additionalOffByMonth={};
+    w.additionalOffByMonth[monthKey(uiYear,uiMonth)] = getHolidayEntriesForMonth(uiYear,uiMonth).filter(h=>['대체공휴일','임시공휴일'].includes(String(h.type||''))).length;
+  });
+  ensureHolidaySeedsForVisibleYear();
+  saveData(true);
+  renderApp();
+  popup('공휴일 항목이 삭제되었습니다.');
+}
+
+function renderAdminOverview(){
+  const el=document.getElementById('tab-admin-overview');
+  const cards=(data.wards||[]).map(w=>{
+    const nurses=(w.nurses||[]).length;
+    const reqs=(w.requests||[]).length;
+    const schedDays=Object.keys(w.schedule||{}).length;
+    return `
+      <div class="item">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="font-size:18px;font-weight:700">${escapeHtml(w.name)}</div>
+            <div class="small muted" style="margin-top:6px">간호사 ${nurses}명 · 휴가/희망요청 ${reqs}건 · 스케줄 저장일수 ${schedDays}일</div>
+          </div>
+          <button type="button" onclick="openAdminWardScheduleViewer('${w.id}')">근무표 보기</button>
+        </div>
+      </div>`;
+  }).join('') || '<div class="muted">등록된 병동이 없습니다.</div>';
+
+  el.innerHTML=`
+    <div class="card">
+      <h3>병동별 현황</h3>
+      <div class="sub">근무현황은 병동 현황과 근무표 확인 중심으로 구성됩니다.</div>
+      <div style="height:12px"></div>
+      <div class="grid2">${cards}</div>
+    </div>
+    <div id="adminWardScheduleViewer" class="card hidden"></div>`;
+}
+function adminOpenWardSchedule(wardId){
+  const ward=getWardById(wardId), sched=ward.schedule||{}, stats=summarizeSchedule(sched,ward.nurses,uiYear,uiMonth);
+  let head=`<div class="row" style="justify-content:space-between"><h3>${ward.name} 근무표 <span class="badge">v8 hard constraints</span></h3><button onclick="document.getElementById('adminWardScheduleViewer').classList.add('hidden')">닫기</button></div>`;
+  let table=renderScheduleTable(ward,sched,stats);
+  const box=document.getElementById('adminWardScheduleViewer'); box.classList.remove('hidden'); box.innerHTML=head+table;
+}
+
+function openAdminWardScheduleViewer(wardId){
+  const ward=getWardById(wardId);
+  const box=document.getElementById('adminWardScheduleViewer');
+  if(!ward || !box) return;
+  const schedule=ward.schedule||{};
+  const stats=summarizeSchedule(schedule, ward.nurses||[], uiYear, uiMonth);
+  box.classList.remove('hidden');
+  box.innerHTML=`
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <h3>${escapeHtml(ward.name)} 근무표</h3>
+        <div class="sub">${uiYear}년 ${uiMonth}월 기준</div>
+      </div>
+      <button type="button" onclick="document.getElementById('adminWardScheduleViewer').classList.add('hidden')">닫기</button>
+    </div>
+    <div style="height:12px"></div>
+    ${renderScheduleTable(ward, schedule, stats, false)}
+  `;
+}
+
+function renderAdminWards(){
+  const el=document.getElementById('tab-admin-wards');
+  el.innerHTML=`
+    <div class="card">
+      <h3>신규 병동 + 담당 수간호사 계정 생성</h3>
+      <div class="sub">병동을 만들면서 담당 수간호사 계정까지 한 번에 등록합니다.</div>
+      <div class="admin-ward-create-grid" style="margin-top:16px">
+        <div class="field"><div class="label">병동명</div><input id="newWardName"></div>
+        <div class="field"><div class="label">수간호사 이름</div><input id="newHeadNurseName"></div>
+        <div class="field"><div class="label">로그인 아이디</div><input id="newHeadNurseLogin"></div>
+        <div class="field"><div class="label">비밀번호</div><input id="newHeadNursePassword"></div>
+        <div class="field"><div class="label">생성</div><button class="primary" type="button" onclick="createWardAndUser()">병동/계정 추가</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>관리자 비밀번호 변경</h3>
+      <div class="sub">전체 관리자 계정의 비밀번호를 변경합니다.</div>
+      <div class="grid3" style="margin-top:16px">
+        <div class="field"><div class="label">현재 비밀번호</div><input id="adminCurrentPassword" type="password"></div>
+        <div class="field"><div class="label">새 비밀번호</div><input id="adminNewPassword" type="password"></div>
+        <div class="field"><div class="label">새 비밀번호 확인</div><input id="adminNewPasswordConfirm" type="password"></div>
+      </div>
+      <div style="margin-top:12px"><button class="primary" type="button" onclick="changeAdminPassword()">비밀번호 변경</button></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <h3>병동/계정 통합 목록</h3>
+          <div class="sub">병동 정보와 담당 수간호사 계정을 한 화면에서 관리합니다.</div>
+        </div>
+        <button class="primary" type="button" onclick="saveAdminWardsTab()">저장</button>
+      </div>
+      <div style="height:12px"></div>
+      <div class="admin-ward-list-grid">
+        ${(data.wards||[]).map(w=>{
+          const user=(data.users||[]).find(u=>u.role==='ward' && u.wardId===w.id);
+          return `
+            <div class="item admin-ward-card">
+              <div class="row-top">
+                <div>
+                  <div style="font-size:18px;font-weight:700">${escapeHtml(w.name)}</div>
+                  <div class="meta">간호사 ${(w.nurses||[]).length}명</div>
+                </div>
+                <button class="danger" type="button" onclick="deleteWard('${w.id}')">병동 삭제</button>
+              </div>
+
+              <div class="info-grid">
+                <div class="label">병동명</div>
+                <input value="${escapeHtml(w.name)}" onchange="updateWardField('${w.id}','name',this.value)">
+
+                <div class="label">담당 수간호사</div>
+                <input value="${escapeHtml(user?.name||'')}" onchange="${user ? `updateWardUserField('${user.id}','name',this.value)` : ''}">
+
+                <div class="label">로그인 아이디</div>
+                <input value="${escapeHtml(user?.loginId||'')}" onchange="${user ? `updateWardUserField('${user.id}','loginId',this.value)` : ''}">
+
+                <div class="label">비밀번호</div>
+                <input value="${escapeHtml(user?.password||'')}" onchange="${user ? `updateWardUserField('${user.id}','password',this.value)` : ''}">
+              </div>
+            </div>`;
+        }).join('') || '<div class="muted">등록된 병동이 없습니다.</div>'}
+      </div>
+    </div>`;
+}
+function addWardByAdmin(){
+  const name=document.getElementById('newWardName').value.trim();
+  const headName=document.getElementById('newHeadName').value.trim();
+  const loginId=document.getElementById('newHeadLoginId').value.trim();
+  const password=document.getElementById('newHeadPassword').value;
+  if(!name) return alert('병동명을 입력하세요.');
+  if(!headName || !loginId || !password) return alert('담당 수간호사 계정 정보까지 함께 입력하세요.');
+  if(data.users.find(u=>u.loginId.toLowerCase()===loginId.toLowerCase())) return alert('이미 사용 중인 아이디입니다.');
+  const id='ward-'+Date.now();
+  data.wards.push({
+    id,
+    name,
+    shiftsRequired:{
+      D:Number(document.getElementById('newWardD').value||3),
+      E:Number(document.getElementById('newWardE').value||2),
+      N:Number(document.getElementById('newWardN').value||2)
+    },
+    nurses:[],
+    requests:[],
+    schedule:{},
+    additionalOffByMonth:{},
+    calendarEvents:[]
+  });
+  data.users.push({
+    id:'u-'+Date.now(),
+    name:headName,
+    loginId,
+    password,
+    role:'ward',
+    wardId:id
+  });
+  saveData(true); renderApp(); popup('병동과 담당 수간호사 계정이 함께 생성되었습니다.');
+}
+function updateWardField(wardId, key, value){
+  const ward=getWardById(wardId); if(!ward) return;
+  ward[key]=value;
+  saveData(true);
+}
+function updateWardShiftReq(wardId, shift, value){
+  const ward=getWardById(wardId); if(!ward) return;
+  if(!ward.shiftsRequired) ward.shiftsRequired={D:3,E:2,N:2};
+  ward.shiftsRequired[shift]=Number(value||0);
+  saveData(true);
+}
+function createWardAndUser(){
+  const wardName = String(document.getElementById('newWardName')?.value || '').trim();
+  const nurseName = String(document.getElementById('newHeadNurseName')?.value || '').trim();
+  const loginId = String(document.getElementById('newHeadNurseLogin')?.value || '').trim();
+  const password = String(document.getElementById('newHeadNursePassword')?.value || '').trim();
+
+  if(!wardName) return alert('병동명을 입력하세요.');
+  if(!nurseName) return alert('수간호사 이름을 입력하세요.');
+  if(!loginId) return alert('로그인 아이디를 입력하세요.');
+  if(!password) return alert('비밀번호를 입력하세요.');
+
+  const wardNameNorm = wardName.toLowerCase();
+  const loginNorm = loginId.toLowerCase();
+
+  if((data.wards||[]).some(w => String(w.name||'').toLowerCase() === wardNameNorm)){
+    return alert('이미 존재하는 병동명입니다.');
+  }
+  if((data.users||[]).some(u => String(u.loginId||'').toLowerCase() === loginNorm)){
+    return alert('이미 존재하는 로그인 아이디입니다.');
+  }
+
+  const wardId = 'ward-' + Date.now();
+  const newWard = {
+    id: wardId,
+    name: wardName,
+    nurses: [],
+    calendarEvents: [],
+    additionalOffByMonth: {},
+    requests: [],
+    leaveRequests: [],
+    schedule: {},
+    staffingRules: { D:{min:0,max:0}, E:{min:0,max:0}, N:{min:0,max:0} }
+  };
+  const newUser = {
+    id: 'user-' + Date.now(),
+    role: 'ward',
+    wardId: wardId,
+    name: nurseName,
+    loginId: loginId,
+    password: password
+  };
+
+  if(!Array.isArray(data.wards)) data.wards = [];
+  if(!Array.isArray(data.users)) data.users = [];
+  data.wards.push(newWard);
+  data.users.push(newUser);
+
+  const fields = ['newWardName','newHeadNurseName','newHeadNurseLogin','newHeadNursePassword'];
+  fields.forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  });
+
+  saveData(true);
+  renderAdminWards();
+  renderTopStats();
+  popup('병동/계정이 추가되었습니다.');
+}
+
+
+function changeAdminPassword(){
+  const current = String(document.getElementById('adminCurrentPassword')?.value || '');
+  const nextPw = String(document.getElementById('adminNewPassword')?.value || '');
+  const confirmPw = String(document.getElementById('adminNewPasswordConfirm')?.value || '');
+  const adminUser = (data.users||[]).find(u=>u.role==='admin');
+  if(!adminUser) return alert('관리자 계정을 찾을 수 없습니다.');
+  if(!current) return alert('현재 비밀번호를 입력하세요.');
+  if(String(adminUser.password||'') !== current) return alert('현재 비밀번호가 올바르지 않습니다.');
+  if(!nextPw) return alert('새 비밀번호를 입력하세요.');
+  if(nextPw !== confirmPw) return alert('새 비밀번호 확인이 일치하지 않습니다.');
+  adminUser.password = nextPw;
+
+  if(currentUser && currentUser.role==='admin'){
+    currentUser.password = nextPw;
+  }
+
+  saveData(true);
+  ['adminCurrentPassword','adminNewPassword','adminNewPasswordConfirm'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.value='';
+  });
+  popup('관리자 비밀번호가 변경되었습니다.');
+  renderAdminWards();
+}
+
+
+function saveAdminWardsTab(){
+  if(document.activeElement && typeof document.activeElement.blur === 'function'){
+    document.activeElement.blur();
+  }
+
+  const currentEl = document.getElementById('adminCurrentPassword');
+  const newEl = document.getElementById('adminNewPassword');
+  const confirmEl = document.getElementById('adminNewPasswordConfirm');
+
+  const current = String(currentEl?.value || '').trim();
+  const nextPw = String(newEl?.value || '').trim();
+  const confirmPw = String(confirmEl?.value || '').trim();
+
+  if(current || nextPw || confirmPw){
+    const adminUser = (data.users||[]).find(u=>u.role==='admin');
+    if(!adminUser) return alert('관리자 계정을 찾을 수 없습니다.');
+    if(String(adminUser.password||'') !== current) return alert('현재 비밀번호가 올바르지 않습니다.');
+    if(!nextPw) return alert('새 비밀번호를 입력하세요.');
+    if(nextPw !== confirmPw) return alert('새 비밀번호 확인이 일치하지 않습니다.');
+    adminUser.password = nextPw;
+    if(currentUser && currentUser.role==='admin'){
+      currentUser.password = nextPw;
+    }
+    if(currentEl) currentEl.value='';
+    if(newEl) newEl.value='';
+    if(confirmEl) confirmEl.value='';
+  }
+
+  saveData(true);
+  renderAdminWards();
+  renderTopStats();
+  popup('병동/계정 변경사항이 저장되었습니다.');
+}
+
+function updateWardUserField(userId, key, value){
+  const user=data.users.find(u=>u.id===userId); if(!user) return;
+  if(key==='loginId'){
+    const exists=data.users.find(u=>u.loginId.toLowerCase()===value.toLowerCase() && u.id!==userId);
+    if(exists){ alert('이미 사용 중인 아이디입니다.'); renderApp(); return; }
+  }
+  user[key]=value;
+  saveData(true);
+}
+function addExtraWardUser(wardId){
+  const ward=getWardById(wardId);
+  if(!ward) return;
+  const name=prompt(`${ward.name} 담당자 이름을 입력하세요.`);
+  if(!name) return;
+  const loginId=prompt('로그인 아이디를 입력하세요.');
+  if(!loginId) return;
+  if(data.users.find(u=>u.loginId.toLowerCase()===loginId.toLowerCase())) return alert('이미 사용 중인 아이디입니다.');
+  const password=prompt('비밀번호를 입력하세요.');
+  if(!password) return;
+  data.users.push({id:'u-'+Date.now(), name, loginId, password, role:'ward', wardId});
+  saveData(true); renderApp(); popup('병동 관리자 계정이 추가되었습니다.');
+}
+function deleteWard(wardId){
+  if(!confirm('병동을 삭제할까요? 연결된 병동 관리자 계정의 wardId도 비워질 수 있습니다.')) return;
+  data.wards=data.wards.filter(w=>w.id!==wardId);
+  data.users=data.users.filter(u=>u.wardId!==wardId || u.role==='admin');
+  saveData(); renderApp();
+}
+function deleteUser(uid){ if(!confirm('계정을 삭제할까요?')) return; data.users=data.users.filter(u=>u.id!==uid); saveData(); renderApp(); }
+
+function renderAdminCodes(){
+  const el=document.getElementById('tab-admin-codes');
+  const suggestedPlacement = ['D/E/N 균등 분배','팀별 균형','나이트 순환','나이트 적게'];
+  el.innerHTML=`
+    <div class="card">
+      <h3>근무코드 관리</h3>
+      <div class="sub">실제 근무표에 들어가는 코드와 시간을 관리합니다. 새 근무코드도 직접 추가할 수 있습니다.</div>
+
+      <div class="compact-row" style="margin-top:12px">
+        <div class="field"><div class="label">코드</div><input id="newShiftCodeCode" placeholder="예: MD"></div>
+        <div class="field"><div class="label">이름</div><input id="newShiftCodeName" placeholder="예: Mid day"></div>
+        <div class="field"><div class="label">시작</div><select id="newShiftCodeStart" data-time-select="1" class="time-select-collapsed"><option value="">--:--</option>${getHalfHourOptionTags('')}</select></div>
+        <div class="field"><div class="label">종료</div><select id="newShiftCodeEnd" data-time-select="1" class="time-select-collapsed"><option value="">--:--</option>${getHalfHourOptionTags('')}</select></div>
+        <div class="field"><div class="label">설명</div><input id="newShiftCodeDesc" placeholder="예: 중간근무"></div>
+        <div class="field"><div class="label">추가</div><button type="button" class="primary" onclick="addShiftCode()">근무코드 추가</button></div>
+      </div>
+
+      <div style="height:12px"></div>
+      ${(data.shiftCodes||[]).map(sc=>`
+        <div class="item" style="margin-bottom:8px">
+          <div class="compact-row">
+            <div class="field"><div class="label">코드</div><input value="${escapeHtml(sc.code)}" onchange="updateShiftCodeField('${sc.id}','code',this.value)"></div>
+            <div class="field"><div class="label">이름</div><input value="${escapeHtml(sc.name)}" onchange="updateShiftCodeField('${sc.id}','name',this.value)"></div>
+            <div class="field"><div class="label">시작</div><select data-time-select="1" class="time-select-collapsed" onchange="updateShiftCodeField('${sc.id}','startTime',this.value)"><option value="" ${(sc.startTime||'')===''?'selected':''}>--:--</option>${getHalfHourOptionTags(sc.startTime||'')}</select></div>
+            <div class="field"><div class="label">종료</div><select data-time-select="1" class="time-select-collapsed" onchange="updateShiftCodeField('${sc.id}','endTime',this.value)"><option value="" ${(sc.endTime||'')===''?'selected':''}>--:--</option>${getHalfHourOptionTags(sc.endTime||'')}</select></div>
+            <div class="field"><div class="label">설명</div><input value="${escapeHtml(sc.desc||'')}" onchange="updateShiftCodeField('${sc.id}','desc',this.value)"></div>
+            <div class="field"><div class="label">관리</div><button type="button" class="danger" onclick="deleteShiftCode('${sc.id}')">삭제</button></div>
+          </div>
+        </div>`).join('')}
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>근무유형 관리</h3>
+        <div class="sub">근무유형은 여러 근무코드를 묶는 개념입니다. 예: 3S = D/E/N</div>
+        <div class="grid2" style="margin-top:12px">
+          <div class="field"><div class="label">이름</div><input id="newWorkTypeName" placeholder="예: 3교대, Day keep, Night keep"></div>
+          <div class="field"><div class="label">코드</div><input id="newWorkTypeCode" placeholder="예: 3S, DK, NK"></div>
+        </div>
+        <div style="margin-top:12px" class="small muted">포함할 근무코드 선택</div>
+        <div class="row" style="gap:8px; margin-top:8px">
+          ${(data.shiftCodes||[]).map(sc=>`<label class="check-item" style="padding:6px 10px"><input type="checkbox" id="newWT_${sc.id}" ${preselectNewWorkTypeShiftCodeId===sc.id?'checked':''}> <span>${escapeHtml(sc.code)}</span></label>`).join('')}
+        </div>
+        <div style="margin-top:12px"><button type="button" class="primary" onclick="addWorkType()">근무유형 추가</button></div>
+        <div style="height:12px"></div>
+        ${(data.workTypes||[]).map(w=>{
+          const shifts=getWorkTypeShiftCodes(w);
+          return `<div class="item" style="margin-bottom:8px">
+            <label class="check-item" style="justify-content:space-between">
+              <div class="row" style="align-items:center">
+                <input type="checkbox" checked disabled>
+                <span><strong>${escapeHtml(w.name)}</strong> ${w.code?`<span class="badge">${escapeHtml(w.code)}</span>`:''}
+                ${shifts.map(sc=>`<span class="badge">${escapeHtml(sc.code)}</span>`).join(' ')}</span>
+              </div>
+              <div class="row">
+                <button type="button" onclick="editWorkType('${w.id}')">수정 모드</button>
+                <button type="button" class="danger" onclick="deleteNamedItem('workTypes','${w.id}')">삭제</button>
+              </div>
+            </label>
+          </div>`;
+        }).join('') || '<div class="muted">등록된 근무유형이 없습니다.</div>'}
+      </div>
+
+      <div class="card">
+        <h3>배치 기준 관리</h3>
+        <div class="sub">관리자가 기준을 만들고, 병동 수간호사가 근무자별로 선택하면 자동 스케줄링에 반영됩니다. 위에 있는 항목일수록 우선순위가 높습니다. 드래그로 순서를 변경할 수 있습니다.</div>
+        <div class="small muted" style="margin-top:8px">추천 기준</div>
+        <div class="row" style="gap:8px; margin-top:8px">
+          ${suggestedPlacement.map(name=>`<button type="button" onclick="quickAddPlacementRule('${name.replace(/'/g,"\'")}')">${name}</button>`).join('')}
+        </div>
+        <div class="field" style="margin-top:12px"><div class="label">이름</div><input id="newPlacementRuleName" placeholder="예: D/E/N 균등 분배, 팀별 균형"></div>
+        <div style="margin-top:12px"><button type="button" class="primary" onclick="addPlacementRule()">배치기준 추가</button></div>
+        <div style="height:12px"></div>
+        ${(getSortedPlacementRules()).map((w,idx)=>`
+          <div class="item" style="margin-bottom:8px">
+            <label class="check-item" style="justify-content:space-between">
+              <div class="row" style="align-items:center">
+                <input type="checkbox" checked disabled>
+                <span><strong>${escapeHtml(w.name)}</strong> <span class="badge">우선순위 ${w.priority||idx+1}</span></span>
+              </div>
+              <div class="row">
+                <button type="button" onclick="movePlacementRule('${w.id}',-1)">↑</button>
+                <button type="button" onclick="movePlacementRule('${w.id}',1)">↓</button>
+                <button type="button" onclick="editNamedItem('placementRules','${w.id}')">수정</button>
+                <button type="button" class="danger" onclick="deleteNamedItem('placementRules','${w.id}')">삭제</button>
+              </div>
+            </label>
+          </div>`).join('') || '<div class="muted">등록된 배치 기준이 없습니다.</div>'}
+      </div>
+    </div>`;
+  attachTimeSelectBehavior();
+}
+function addShiftCode(){
+  var codeEl=document.getElementById('newShiftCodeCode');
+  var nameEl=document.getElementById('newShiftCodeName');
+  var startEl=document.getElementById('newShiftCodeStart');
+  var endEl=document.getElementById('newShiftCodeEnd');
+  var descEl=document.getElementById('newShiftCodeDesc');
+  var code=codeEl ? String(codeEl.value||'').trim() : '';
+  var name=nameEl ? String(nameEl.value||'').trim() : '';
+  var startTime=startEl ? String(startEl.value||'').trim() : '';
+  var endTime=endEl ? String(endEl.value||'').trim() : '';
+  var desc=descEl ? String(descEl.value||'').trim() : '';
+  if(!code){ alert('근무코드를 입력하세요.'); return; }
+  if(!name){ alert('근무코드 이름을 입력하세요.'); return; }
+  if((data.shiftCodes||[]).find(s=>String(s.code||'').toLowerCase()===code.toLowerCase())){
+    alert('이미 존재하는 근무코드입니다.');
+    return;
+  }
+  if(!Array.isArray(data.shiftCodes)) data.shiftCodes=[];
+  const newId='sc-'+Date.now();
+  data.shiftCodes.push({id:newId, code, name, startTime, endTime, desc});
+  preselectNewWorkTypeShiftCodeId=newId;
+  if(codeEl) codeEl.value='';
+  if(nameEl) nameEl.value='';
+  if(startEl) startEl.value='';
+  if(endEl) endEl.value='';
+  if(descEl) descEl.value='';
+  saveData(true);
+  renderAdminCodes();
+  popup('근무코드가 추가되었습니다.');
+}
+function updateShiftCodeField(id,key,value){
+  const item=(data.shiftCodes||[]).find(s=>s.id===id);
+  if(!item) return;
+  item[key]=value;
+  saveData(true);
+}
+function deleteShiftCode(id){
+  if(!confirm('근무코드를 삭제할까요?')) return;
+  data.shiftCodes=(data.shiftCodes||[]).filter(s=>s.id!==id);
+  (data.workTypes||[]).forEach(w=>{
+    w.allowedShiftCodeIds=(w.allowedShiftCodeIds||[]).filter(x=>x!==id);
+  });
+  saveData(true);
+  renderAdminCodes();
+  popup('근무코드가 삭제되었습니다.');
+}
+function addWorkType(){
+  var nameEl=document.getElementById('newWorkTypeName');
+  var codeEl=document.getElementById('newWorkTypeCode');
+  var name=nameEl ? String(nameEl.value||'').trim() : '';
+  var code=codeEl ? String(codeEl.value||'').trim() : '';
+  if(!name){ alert('근무유형 이름을 입력하세요.'); return; }
+  if(!code){ alert('근무유형 코드를 입력하세요.'); return; }
+  const allowedShiftCodeIds=(data.shiftCodes||[])
+    .filter(sc=>document.getElementById('newWT_'+sc.id)?.checked)
+    .map(sc=>sc.id);
+  if(allowedShiftCodeIds.length===0){ alert('포함할 근무코드를 하나 이상 선택하세요.'); return; }
+  if(!Array.isArray(data.workTypes)) data.workTypes=[];
+  data.workTypes.push({id:'wt-'+Date.now(), name, code, allowedShiftCodeIds});
+  if(nameEl) nameEl.value='';
+  if(codeEl) codeEl.value='';
+  (data.shiftCodes||[]).forEach(sc=>{ const el=document.getElementById('newWT_'+sc.id); if(el) el.checked=false; });
+  preselectNewWorkTypeShiftCodeId='';
+  saveData(true);
+  renderAdminCodes();
+  popup('근무유형이 추가되었습니다.');
+}
+function editWorkType(id){
+  const item=(data.workTypes||[]).find(w=>w.id===id);
+  if(!item) return;
+
+  const options = (data.shiftCodes||[])
+    .map(sc=>`<label class="check-item" style="padding:6px 10px">
+      <input type="checkbox" class="editWorkTypeShift" value="${sc.id}" ${(item.allowedShiftCodeIds||[]).includes(sc.id)?'checked':''}>
+      <span>${escapeHtml(sc.code)}</span>
+    </label>`).join('');
+
+  const body = `
+    <div class="grid2">
+      <div class="field"><div class="label">이름</div><input id="editWorkTypeName" value="${escapeHtml(item.name||'')}"></div>
+      <div class="field"><div class="label">코드</div><input id="editWorkTypeCode" value="${escapeHtml(item.code||'')}"></div>
+    </div>
+    <div style="margin-top:12px" class="small muted">포함할 근무코드 선택</div>
+    <div class="row" style="gap:8px; margin-top:8px; flex-wrap:wrap">
+      ${options}
+    </div>
+  `;
+
+  openModal('근무유형 수정', body, [
+    {label:'닫기', action:'close'},
+    {label:'저장', primary:true, action:function(){
+      const name = String(document.getElementById('editWorkTypeName')?.value || '').trim();
+      const code = String(document.getElementById('editWorkTypeCode')?.value || '').trim();
+      const allowedShiftCodeIds = Array.from(document.querySelectorAll('.editWorkTypeShift:checked')).map(el=>el.value);
+      if(!name){ alert('근무유형 이름을 입력하세요.'); return; }
+      if(!code){ alert('근무유형 코드를 입력하세요.'); return; }
+      if(allowedShiftCodeIds.length===0){ alert('포함할 근무코드를 하나 이상 선택하세요.'); return; }
+      item.name = name;
+      item.code = code;
+      item.allowedShiftCodeIds = allowedShiftCodeIds;
+      saveData(true);
+      renderAdminCodes();
+      closeModal();
+      popup('근무유형이 수정되었습니다.');
+    }}
+  ]);
+}
+function quickAddPlacementRule(name){
+  if(!Array.isArray(data.placementRules)) data.placementRules=[];
+  if(data.placementRules.find(x=>String(x.name).trim()===String(name).trim())){
+    popup('이미 등록된 배치 기준입니다.');
+    return;
+  }
+  data.placementRules.push({id:'pr-'+Date.now()+Math.random().toString(36).slice(2,6), name, priority:(data.placementRules||[]).length+1});
+  saveData(true);
+  renderAdminCodes();
+  popup('배치 기준이 추가되었습니다.');
+}
+function addPlacementRule(){
+  var nameEl=document.getElementById('newPlacementRuleName');
+  var name=nameEl ? String(nameEl.value||'').trim() : '';
+  if(!name){ alert('배치 기준 이름을 입력하세요.'); return; }
+  if(!Array.isArray(data.placementRules)) data.placementRules=[];
+  data.placementRules.push({id:'pr-'+Date.now(), name, priority:(data.placementRules||[]).length+1});
+  if(nameEl) nameEl.value='';
+  saveData(true);
+  renderAdminCodes();
+  popup('배치 기준이 추가되었습니다.');
+}
+function editNamedItem(bucket,id){
+  const arr=data[bucket]||[];
+  const item=arr.find(x=>x.id===id);
+  if(!item) return;
+  const newName=prompt('이름을 수정하세요.', item.name||'');
+  if(!newName) return;
+  item.name=newName.trim();
+  if(bucket==='placementRules') normalizePlacementRulePriorities(); saveData(true); renderAdminCodes(); popup('수정되었습니다.');
+}
+function deleteNamedItem(bucket,id){
+  if(!confirm('삭제할까요?')) return;
+  data[bucket]=(data[bucket]||[]).filter(x=>x.id!==id); if(bucket==='placementRules') normalizePlacementRulePriorities();
+  (data.wards||[]).forEach(w=>(w.nurses||[]).forEach(n=>{
+    if(bucket==='workTypes') n.workTypeIds=(n.workTypeIds||[]).filter(v=>v!==id);
+    if(bucket==='placementRules') n.placementRuleIds=(n.placementRuleIds||[]).filter(v=>v!==id);
+  }));
+  saveData(true); renderAdminCodes(); renderWardNurses?.(); popup('삭제되었습니다.');
+}
+
+function renderAdminCalendar(){
+  const el=document.getElementById('tab-admin-calendar');
+  if(!el) return;
+  const sharedWardEvents = (typeof getSharedWardEvents === 'function' ? getSharedWardEvents() : []).sort(
+    (a,b)=>(String(a.date||'')+String(a.startTime||'')).localeCompare(String(b.date||'')+String(b.startTime||''))
+  );
+  const holidayEntries = (typeof getHolidayEntriesForMonth === 'function' ? getHolidayEntriesForMonth(uiYear,uiMonth) : []).sort(
+    (a,b)=>String(a.date||'').localeCompare(String(b.date||''))
+  );
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <h3>관리자 공유 달력</h3>
+          <div class="sub">병원행사 또는 간호부 행사를 입력하면 모든 병동에서 보입니다. 병동 관리자가 간호부 공유 체크한 일정도 함께 표시됩니다.</div>
+        </div>
+        <div class="row">
+          <input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); renderApp()">
+          <input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); renderApp()">
+        </div>
+      </div>
+      <div style="height:12px"></div>
+      <div id="adminCalendarBox"></div>
+    </div>
+
+    <div class="card">
+      <h3>임시공휴일 / 대체공휴일 추가</h3>
+      <div class="sub">대한민국 달력 기준 법정공휴일은 자동 지정됩니다. 여기서는 임시공휴일·대체공휴일만 추가로 넣으면 됩니다.</div>
+      <div class="grid4" style="margin-top:12px">
+        <div class="field"><div class="label">날짜</div><input id="holidayDateInput" type="date"></div>
+        <div class="field"><div class="label">유형</div><select id="holidayTypeInput"><option value="대체공휴일">대체공휴일</option><option value="임시공휴일">임시공휴일</option><option value="법정공휴일">법정공휴일</option></select></div>
+        <div class="field" style="grid-column:span 2"><div class="label">메모</div><input id="holidayNoteInput" placeholder="예: 대통령선거일, 어린이날 대체휴일"></div>
+      </div>
+      <div style="margin-top:12px"><button type="button" class="primary" onclick="addHolidayEntry()">추가 공휴일 반영</button></div>
+      <div style="height:12px"></div>
+      ${holidayEntries.map(h=>`
+        <div class="item" style="margin-bottom:10px">
+          <div class="row" style="justify-content:space-between">
+            <div><strong>${h.date}</strong> · ${escapeHtml(h.type||'공휴일')} ${h.note?`· ${escapeHtml(h.note)}`:''}</div>
+            <button type="button" class="danger" onclick="deleteHolidayEntry('${h.date}')">삭제</button>
+          </div>
+        </div>`).join('') || '<div class="muted">이 달에 추가/등록된 공휴일이 없습니다.</div>'}
+    </div>
+
+    <div class="card">
+      <h3>등록된 공유 일정</h3>
+      <div style="height:12px"></div>
+      ${
+        [
+          ...((data.systemEvents||[]).map(e=>`
+            <div class="item" style="margin-bottom:10px">
+              <div class="row" style="justify-content:space-between">
+                <div><strong>${e.date}</strong>${e.startTime&&e.endTime?` ${e.startTime}~${e.endTime}`:(e.startTime?` ${e.startTime}`:'')} · ${escapeHtml(e.title)} <span class="badge">관리자 입력</span></div>
+                <button type="button" onclick="manageEvent('system','${e.id}')">열기</button>
+              </div>
+            </div>`)),
+          ...(sharedWardEvents.map(e=>`
+            <div class="item" style="margin-bottom:10px">
+              <div class="row" style="justify-content:space-between">
+                <div><strong>${e.date}</strong>${e.startTime&&e.endTime?` ${e.startTime}~${e.endTime}`:(e.startTime?` ${e.startTime}`:'')} · ${escapeHtml(e.title)} <span class="badge">${e.wardName||''}</span><span class="badge">병동 공유</span></div>
+                <button type="button" onclick="manageEvent('ward','${e.id}','${e.sourceWardId}')">열기</button>
+              </div>
+            </div>`))
+        ].join('') || '<div class="muted">등록된 일정이 없습니다.</div>'
+      }
+    </div>`;
+
+  if (typeof renderMonthCalendar === 'function') {
+    renderMonthCalendar('adminCalendarBox', uiYear, uiMonth, null, 'edit');
+  }
+}
+
+function renderAdminGenerate(){
+  const el=document.getElementById('tab-admin-generate');
+  if(!el) return;
+
+  el.innerHTML=`
+    <div class="card">
+      <h3>공통 스케줄 생성 설정</h3>
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><div class="label">기본 최대 N 횟수</div><input type="number" value="${data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6}" onchange="updateCommonScheduleSetting('defaultMaxNightPerMonth',Number(this.value))"></div>
+        <div class="field"><div class="label">기본 연속근무 허용일</div><input type="number" value="${data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5}" onchange="updateCommonScheduleSetting('defaultMaxConsecutiveDays',Number(this.value))"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>공통 생성 원칙</h3>
+      <div class="sub">병동마다 다른 것이 아닌 자동 생성 기준을 중앙에서 관리합니다. 위에 있는 항목일수록 우선순위가 높습니다. 드래그로 순서를 변경할 수 있습니다.</div>
+      <div class="row" style="margin-top:12px">
+        <input id="newGenerationRuleName" placeholder="새 공통 생성 원칙 이름 입력">
+        <button type="button" class="primary" onclick="addGenerationRule()">원칙 추가</button>
+      </div>
+      <div style="height:12px"></div>
+      ${getSortedGenerationRules().map(rule=>`
+        <div class="item generation-rule-item" draggable="true"
+             ondragstart="onGenerationRuleDragStart('${rule.id}', event)"
+             ondragover="onGenerationRuleDragOver('${rule.id}', event)"
+             ondragleave="onGenerationRuleDragLeave(event)"
+             ondrop="onGenerationRuleDrop('${rule.id}', event)"
+             ondragend="onGenerationRuleDragEnd(event)">
+          <div class="generation-rule-row">
+            <div class="generation-rule-main">
+              <input type="checkbox" ${rule.enabled!==false?'checked':''} onchange="toggleGenerationRule('${rule.id}',this.checked)">
+              <div class="generation-rule-content">
+                <div class="generation-rule-title">${escapeHtml(rule.name)}</div>
+                <div class="generation-rule-meta"><span class="badge">우선순위 ${rule.priority||''}</span> <span class="badge">적용코드 ${escapeHtml(getGenerationRuleCommand(rule)||'customRule')}</span></div>
+              </div>
+            </div>
+            <div class="generation-rule-actions">
+              <button type="button" class="generation-rule-drag" title="드래그하여 순서 변경">⋮⋮</button>
+              <button type="button" onclick="editGenerationRule('${rule.id}')">수정</button>
+              <button type="button" class="danger" onclick="deleteGenerationRule('${rule.id}')">삭제</button>
+            </div>
+          </div>
+        </div>`).join('') || '<div class="muted">등록된 공통 생성 원칙이 없습니다.</div>'}
+    </div>`;
+}
+function updateCommonScheduleSetting(key,val){
+  if(!data.commonScheduleSettings) data.commonScheduleSettings={};
+  data.commonScheduleSettings[key]=val;
+  (data.generationRules||[]).forEach(r=>{ if(r.key===key) r.enabled=!!val; });
+  saveData(true);
+}
+
+function addAdditionalOffHoliday(){ return; }
+
+function setAdminAdditionalOff(val){
+  const wardId = document.getElementById('adminGenerateWard')?.value;
+  const ward = getWardById(wardId) || (data.wards||[])[0];
+  if(!ward) return;
+  if(!ward.additionalOffByMonth) ward.additionalOffByMonth={};
+  ward.additionalOffByMonth[monthKey(uiYear,uiMonth)] = Number(val||0);
+  saveData(true);
+  renderAdminGenerate();
+}
+function runAdminGenerator(){
+  const wardId=document.getElementById('adminGenerateWard')?.value;
+  const y=Number(document.getElementById('adminGenerateYear')?.value||uiYear);
+  const m=Number(document.getElementById('adminGenerateMonth')?.value||uiMonth);
+  const ward=getWardById(wardId) || (data.wards||[])[0];
+  if(!ward) return alert('병동을 선택하세요.');
+  uiYear=y; uiMonth=m;
+  const generated=generateSchedule(ward,y,m);
+  ward.schedule=generated.schedule;
+  saveData(true);
+  const box=document.getElementById('adminGenerateResult');
+  if(box){
+    box.innerHTML=`<div class="item"><div><strong>${ward.name}</strong> 스케줄 생성 완료</div><div class="small muted" style="margin-top:6px">자동 off ${generated.baseOff} + 추가 off ${generated.addOff} = 최종 ${generated.targetOff}</div>${generated.warnings.length?generated.warnings.map(w=>`<div class="alert" style="margin-top:8px">${w}</div>`).join(''):`<div class="ok" style="margin-top:8px">경고 없이 생성되었습니다.</div>`}</div>`;
+  }
+  popup('스케줄이 생성되었습니다.');
+}
+
+function renderAdminRequests(){
+  const el=document.getElementById('tab-admin-requests');
+  const pending=data.changeRequests.filter(r=>r.status==='pending').length;
+  el.innerHTML=`
+    <div class="card">
+      <h3>병동 관리자 요청함</h3>
+      <div class="sub">새 요청 ${pending}건</div>
+      <div style="height:12px"></div>
+      ${data.changeRequests.map(r=>`
+        <div class="item" style="margin-bottom:10px">
+          <div class="row" style="justify-content:space-between"><strong>${escapeHtml(r.title)}</strong><span class="badge">${r.status}</span></div>
+          <div class="small muted" style="margin-top:6px">${r.wardName} · ${r.category} · ${new Date(r.createdAt).toLocaleString()}</div>
+          <div style="margin-top:8px">${escapeHtml(r.detail)}</div>
+          <div class="row" style="margin-top:10px">
+            ${r.status==='pending'?`<button class="primary" onclick="resolveChangeRequest('${r.id}','approved')">승인 처리</button><button onclick="resolveChangeRequest('${r.id}','reviewed')">확인 처리</button>`:''}
+            <button class="danger" onclick="deleteChangeRequest('${r.id}')">삭제</button>
+          </div>
+        </div>`).join('') || '<div class="muted">요청이 없습니다.</div>'}
+    </div>`;
+  attachTimeSelectBehavior();
+}
+function resolveChangeRequest(id,status){ const r=data.changeRequests.find(x=>x.id===id); if(r) r.status=status; saveData(); renderApp(); }
+function deleteChangeRequest(id){ if(!confirm('요청을 삭제할까요?')) return; data.changeRequests=data.changeRequests.filter(r=>r.id!==id); saveData(); renderApp(); }
+
+
+
+function updateWardStaffingRule(shift,key,val){
+  const ward=getCurrentWard();
+  if(!ward.staffingRules) ward.staffingRules={D:{min:0,max:0},E:{min:0,max:0},N:{min:0,max:0}};
+  if(!ward.staffingRules[shift]) ward.staffingRules[shift]={min:0,max:0};
+  ward.staffingRules[shift][key]=Number(val||0);
+  saveData(true);
+}
+
+function ensureWardDraftState(){
+  const ward=getCurrentWard();
+  if(!ward) return;
+  if(!nurseDraftState[ward.id]){
+    nurseDraftState[ward.id]=(ward.nurses||[]).map(n=>JSON.parse(JSON.stringify(n)));
+  }
+}
+function getWardDraftRows(){
+  ensureWardDraftState();
+  const ward=getCurrentWard();
+  return nurseDraftState[ward.id] || [];
+}
+function updateNurseDraft(id,key,val){
+  const ward=getCurrentWard();
+  ensureWardDraftState();
+  const rows=nurseDraftState[ward.id]||[];
+  const n=rows.find(x=>x.id===id);
+  if(!n) return;
+  n[key]=val;
+}
+function toggleNurseDraftSelection(id,bucket,itemId,checked){
+  const ward=getCurrentWard();
+  ensureWardDraftState();
+  const rows=nurseDraftState[ward.id]||[];
+  const n=rows.find(x=>x.id===id);
+  if(!n) return;
+  if(!Array.isArray(n[bucket])) n[bucket]=[];
+  if(checked){
+    if(!n[bucket].includes(itemId)) n[bucket].push(itemId);
+  } else {
+    n[bucket]=n[bucket].filter(v=>v!==itemId);
+  }
+}
+function saveWardNurseTable(){
+  const ward=getCurrentWard();
+  ensureWardDraftState();
+  ward.nurses = JSON.parse(JSON.stringify(nurseDraftState[ward.id]||[]));
+  saveData(true);
+  popup('근무자 명단 및 근무 형태가 저장되었습니다.');
+  renderWardNurses();
+}
+function resetWardNurseTable(){
+  const ward=getCurrentWard();
+  nurseDraftState[ward.id]=JSON.parse(JSON.stringify(ward.nurses||[]));
+  renderWardNurses();
+}
+
+function renderWardNurses(){
+  const ward=getCurrentWard(), el=document.getElementById('tab-ward-nurses');
+  ensureWardDraftState();
+  const rows=getWardDraftRows();
+  el.innerHTML=`
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h3>근무자 명단 및 근무 형태</h3>
+          <div class="sub">행을 추가하고 수정한 뒤 저장 버튼을 눌러 반영합니다.</div>
+          <div class="grid3" style="margin-top:12px">
+            <div class="item">
+              <div class="small muted" style="margin-bottom:6px">D 인원 (왼쪽 최소 / 오른쪽 최대)</div>
+              <div class="row">
+                <input type="number" style="width:90px" value="${ward.staffingRules?.D?.min||0}" onchange="updateWardStaffingRule('D','min',this.value)" placeholder="최소">
+                <input type="number" style="width:90px" value="${ward.staffingRules?.D?.max||0}" onchange="updateWardStaffingRule('D','max',this.value)" placeholder="최대">
+              </div>
+            </div>
+            <div class="item">
+              <div class="small muted" style="margin-bottom:6px">E 인원 (왼쪽 최소 / 오른쪽 최대)</div>
+              <div class="row">
+                <input type="number" style="width:90px" value="${ward.staffingRules?.E?.min||0}" onchange="updateWardStaffingRule('E','min',this.value)" placeholder="최소">
+                <input type="number" style="width:90px" value="${ward.staffingRules?.E?.max||0}" onchange="updateWardStaffingRule('E','max',this.value)" placeholder="최대">
+              </div>
+            </div>
+            <div class="item">
+              <div class="small muted" style="margin-bottom:6px">N 인원 (왼쪽 최소 / 오른쪽 최대)</div>
+              <div class="row">
+                <input type="number" style="width:90px" value="${ward.staffingRules?.N?.min||0}" onchange="updateWardStaffingRule('N','min',this.value)" placeholder="최소">
+                <input type="number" style="width:90px" value="${ward.staffingRules?.N?.max||0}" onchange="updateWardStaffingRule('N','max',this.value)" placeholder="최대">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="primary" type="button" onclick="addNurse()">근무자 추가</button>
+          <button type="button" onclick="resetWardNurseTable()">되돌리기</button>
+          <button class="primary" type="button" onclick="saveWardNurseTable()">저장</button>
+        </div>
+      </div>
+      <div style="height:12px"></div>
+      <div class="nurse-table-wrap">
+        <table class="nurse-table">
+          <thead>
+            <tr>
+              <th>팀</th>
+              <th>직원 명단</th>
+              <th>근무유형</th>
+              <th>배치제한</th>
+              <th>나이트 최대 개수</th>
+              <th>연속근무 최대 개수</th>
+              <th>메모</th>
+              <th>관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(n=>`
+              <tr>
+                <td>
+                  <select onchange="updateNurseDraft('${n.id}','team',this.value)" class="small-input">
+                    <option ${n.team==='A'?'selected':''}>A</option>
+                    <option ${n.team==='B'?'selected':''}>B</option>
+                    <option ${n.team==='C'?'selected':''}>C</option>
+                  </select>
+                </td>
+                <td>
+                  <input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" onchange="updateNurseDraft('${n.id}','name',this.value)">
+                </td>
+                <td>
+                  <div class="inline-checks">
+                    ${(data.workTypes||[]).map(w=>{
+                      return `<label class="check-item"><input type="checkbox" ${(n.workTypeIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','workTypeIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)}${w.code?` <span class="badge">${escapeHtml(w.code)}</span>`:''}</span></label>`;
+                    }).join('') || '<span class="muted">근무유형 없음</span>'}
+                  </div>
+                </td>
+                <td>
+                  <div class="inline-checks">
+                    ${(getSortedPlacementRules()).map(w=>`<label class="check-item"><input type="checkbox" ${(n.placementRuleIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','placementRuleIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)} <span class="badge">${w.priority||''}</span></span></label>`).join('') || '<span class="muted">배치기준 없음</span>'}
+                  </div>
+                </td>
+                <td>
+                  <input type="number" class="small-input" value="${n.maxNightPerMonth||data.commonScheduleSettings?.defaultMaxNightPerMonth||6}" onchange="updateNurseDraft('${n.id}','maxNightPerMonth',Number(this.value))">
+                </td>
+                <td>
+                  <input type="number" class="small-input" value="${n.maxConsecutiveDays||data.commonScheduleSettings?.defaultMaxConsecutiveDays||5}" onchange="updateNurseDraft('${n.id}','maxConsecutiveDays',Number(this.value))">
+                </td>
+                <td>
+                  <input value="${escapeHtml(n.notes||'')}" placeholder="메모 입력" onchange="updateNurseDraft('${n.id}','notes',this.value)">
+                </td>
+                <td>
+                  <div class="cell-actions">
+                    <select onchange="updateNurseDraft('${n.id}','employmentStatus',this.value)" class="small-input">
+                      <option value="active" ${n.employmentStatus==='active'?'selected':''}>active</option>
+                      <option value="leave" ${n.employmentStatus==='leave'?'selected':''}>leave</option>
+                    </select>
+                    <button class="danger" type="button" onclick="deleteNurse('${n.id}')">삭제</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('') || `<tr><td colspan="8" class="muted">등록된 근무자가 없습니다. 우측 상단의 근무자 추가를 눌러 행을 추가하세요.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+function checkboxHtml(){ return ''; }
+
+
+function renderWardLeaves(){ return renderWardLeave(); }
+function renderWardRequests(){ return renderWardChange(); }
+
+function renderWardLeave(){
+  const ward=getCurrentWard(), el=document.getElementById('tab-ward-leave');
+  const leaveList = ward.leaveRequests || ward.requests || [];
+  el.innerHTML=`
+    <div class="card">
+      <h3>휴가</h3>
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><div class="label">간호사</div><select id="leaveNurse">${ward.nurses.map(n=>`<option value="${n.id}">${n.name}</option>`).join('')}</select></div>
+        <div class="field"><div class="label">날짜</div><input id="leaveDate" type="date"></div>
+        <div class="field"><div class="label">유형</div><select id="leaveType"><option>WO</option><option>AL</option><option>SL</option></select></div>
+        <div class="field"><div class="label">우선순위</div><select id="leavePriority"><option value="must">필수 반영</option><option value="preferred">우선 반영</option><option value="optional">가능 시 반영</option></select></div>
+        <div style="grid-column:span 2" class="field"><div class="label">메모</div><input id="leaveNote"></div>
+      </div>
+      <div style="margin-top:12px"><button class="primary" onclick="addWardLeave()">휴가 추가</button></div>
+    </div>
+    <div class="card">
+      <h3>등록된 휴가 목록</h3>
+      <div style="height:12px"></div>
+      ${leaveList.map(r=>`<div class="item" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><div><strong>${r.date}</strong> · ${r.type} · ${ward.nurses.find(n=>n.id===r.nurseId)?.name||''}</div><button class="danger" onclick="deleteWardLeave('${r.id}')">삭제</button></div><div class="small muted" style="margin-top:6px">${r.priority||''} ${r.note?`· ${escapeHtml(r.note)}`:''}</div></div>`).join('') || '<div class="muted">등록된 휴가가 없습니다.</div>'}
+    </div>`;
+  attachTimeSelectBehavior();
+}
+function renderWardChange(){
+  const ward=getCurrentWard(), el=document.getElementById('tab-ward-change');
+  const ownRequests=(data.changeRequests||[]).filter(r=>r.wardId===ward.id);
+  el.innerHTML=`
+    <div class="card">
+      <h3>요청</h3>
+      <div class="sub">근무유형/배치 기준의 신규생성, 수정, 삭제 요청을 관리자에게 보낼 수 있습니다.</div>
+      <div class="grid3" style="margin-top:12px">
+        <div class="field"><div class="label">분류</div><select id="changeCategory"><option>근무유형</option><option>배치 기준</option><option>기능수정</option></select></div>
+        <div style="grid-column:span 2" class="field"><div class="label">제목</div><input id="changeTitle"></div>
+      </div>
+      <div style="margin-top:12px" class="field"><div class="label">상세 내용</div><textarea id="changeDetail"></textarea></div>
+      <div style="margin-top:12px"><button class="primary" onclick="submitChangeRequest()">관리자에게 요청 보내기</button></div>
+    </div>
+    <div class="card">
+      <h3>보낸 요청 목록</h3>
+      <div style="height:12px"></div>
+      ${ownRequests.map(r=>`
+        <div class="item" style="margin-bottom:10px">
+          <div class="row" style="justify-content:space-between"><strong>${escapeHtml(r.title)}</strong><span class="badge">${r.status}</span></div>
+          <div class="small muted" style="margin-top:6px">${r.category} · ${new Date(r.createdAt).toLocaleString()}</div>
+          <div style="margin-top:8px">${escapeHtml(r.detail)}</div>
+        </div>`).join('') || '<div class="muted">보낸 요청이 없습니다.</div>'}
+    </div>`;
+  attachTimeSelectBehavior();
+}
+function addWardLeave(){
+  const ward=getCurrentWard(), nurseId=document.getElementById('leaveNurse').value, date=document.getElementById('leaveDate').value;
+  if(!nurseId||!date) return alert('직원과 날짜를 입력하세요.');
+  ward.requests.push({id:'r-'+Date.now(),nurseId,date,type:document.getElementById('leaveType').value,priority:'must',note:document.getElementById('leaveNote').value});
+  saveData(true); renderApp(); popup('휴가가 등록되었습니다.');
+}
+function addWardRequest(){ addWardLeave(); }
+function addWardLeave(){ const ward=getCurrentWard(), nurseId=document.getElementById('leaveNurse').value, date=document.getElementById('leaveDate').value; if(!nurseId||!date) return alert('간호사와 날짜를 입력하세요.'); if(!ward.leaveRequests) ward.leaveRequests=[]; ward.leaveRequests.push({id:'r-'+Date.now(),nurseId,date,type:document.getElementById('leaveType').value,priority:document.getElementById('leavePriority').value,note:document.getElementById('leaveNote').value}); ward.requests = ward.leaveRequests; saveData(true); renderApp(); }
+function deleteWardRequest(id){ deleteWardLeave(id); }
+function deleteWardLeave(id){ const ward=getCurrentWard(); ward.leaveRequests=(ward.leaveRequests||[]).filter(r=>r.id!==id); ward.requests = ward.leaveRequests; saveData(true); renderApp(); }
+function submitChangeRequest(){
+  const ward=getCurrentWard(), title=document.getElementById('changeTitle').value.trim(), detail=document.getElementById('changeDetail').value.trim();
+  if(!title||!detail) return alert('제목과 상세 내용을 입력하세요.');
+  data.changeRequests.unshift({id:'cr-'+Date.now(),wardId:ward.id,wardName:ward.name,category:document.getElementById('changeCategory').value,title,detail,status:'pending',createdAt:new Date().toISOString()});
+  saveData(); popup('관리자에게 요청이 전송되었습니다.'); renderApp();
+}
+
+function addHolidayEntryFromWard(){
+  const date=document.getElementById('wardHolidayDateInput')?.value;
+  const type=document.getElementById('wardHolidayTypeInput')?.value || '임시공휴일';
+  const note=document.getElementById('wardHolidayNoteInput')?.value || '';
+  if(!date) return alert('날짜를 입력하세요.');
+  const existing=(data.globalHolidays||[]).find(h=>h.date===date);
+  if(existing){
+    existing.type=type;
+    existing.note=note;
+  } else {
+    data.globalHolidays.push({date,type,note});
+  }
+  data.wards.forEach(w=>syncAdditionalOffCountFromHolidayEntries(w, uiYear, uiMonth));
+  ensureHolidaySeedsForVisibleYear(); saveData(true); renderApp(); popup('추가 공휴일이 반영되었습니다.');
+}
+
+function setAdditionalOff(val){
+  const ward=getCurrentWard();
+  ward.additionalOffByMonth[monthKey(uiYear,uiMonth)]=Number(val||0);
+  saveData(true);
+  renderApp();
+}
+function runGenerator(){ const ward=getCurrentWard(); resultCache=generateSchedule(ward,uiYear,uiMonth); ward.schedule=resultCache.schedule; saveData(); renderGenerateResult(); }
+function renderGenerateResult(){
+  const box=document.getElementById('generateResultBox'); if(!box||!resultCache) return;
+  box.innerHTML = `<div class="item"><div><strong>생성 완료</strong></div><div class="small muted" style="margin-top:6px">기본 off ${resultCache.baseOff} + 추가 off (대체공휴일, 임시공휴일 시 반영) ${resultCache.addOff} = 최종 ${resultCache.targetOff}</div>${
+    resultCache.warnings.length ? resultCache.warnings.map(w=>`<div class="alert" style="margin-top:8px">${w}</div>`).join('') : `<div class="ok" style="margin-top:8px">경고 없이 생성되었습니다.</div>`
+  }</div>`;
+}
+
+function getScheduleDraftKey(wardId,y,m){ return `${wardId}-${y}-${m}`; }
+function cloneJson(v){ return JSON.parse(JSON.stringify(v||{})); }
+function ensureScheduleDraft(ward,y,m){
+  const key=getScheduleDraftKey(ward.id,y,m);
+  if(!scheduleDraftState[key]){
+    scheduleDraftState[key]={ schedule: cloneJson(ward.schedule||{}), edit:false };
+  }
+  return scheduleDraftState[key];
+}
+function getAvailableScheduleCodes(){
+  return (data.shiftCodes||[]).map(s=>s.code).filter(Boolean);
+}
+function updateScheduleCellDraft(wardId,y,m,dateKey,nurseId,val){
+  const key=getScheduleDraftKey(wardId,y,m);
+  if(!scheduleDraftState[key]) return;
+  if(!scheduleDraftState[key].schedule[dateKey]) scheduleDraftState[key].schedule[dateKey]={};
+  scheduleDraftState[key].schedule[dateKey][nurseId]=val;
+}
+function runWardGenerator(){
+  const ward=getCurrentWard();
+  const generated=generateSchedule(ward,uiYear,uiMonth);
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  draft.schedule=cloneJson(generated.schedule);
+  draft.edit=false;
+  resultCache=generated;
+  renderWardSchedule();
+  popup('자동 생성이 완료되었습니다.');
+}
+function enableWardScheduleEdit(){
+  const ward=getCurrentWard();
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  draft.edit=true;
+  renderWardSchedule();
+  popup('수정 모드가 활성화되었습니다.');
+}
+
+function cancelWardGeneratedSchedule(){
+  const ward=getCurrentWard();
+  const key=getScheduleDraftKey(ward.id,uiYear,uiMonth);
+  delete scheduleDraftState[key];
+  resultCache=null;
+  renderWardSchedule();
+  popup('자동 생성 결과가 취소되었습니다.');
+}
+
+function saveWardSchedule(){
+  const ward=getCurrentWard();
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  ward.schedule=cloneJson(draft.schedule);
+  draft.edit=false;
+  saveData(true);
+  popup('근무표가 저장되었습니다.');
+  renderWardSchedule();
+}
+function exportWardScheduleExcel(){
+  const ward=getCurrentWard();
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  const schedule=draft.schedule||{};
+  const stats=summarizeSchedule(schedule,ward.nurses,uiYear,uiMonth);
+  const dayCount=daysInMonth(uiYear,uiMonth);
+  let rows=[];
+  let header=['간호사'];
+  for(let d=1; d<=dayCount; d++){
+    header.push(String(d));
+  }
+  header.push('D 횟수','E 횟수','N 횟수','MD 횟수','OFF 개수','주말/휴일 OFF');
+  rows.push(header);
+  (ward.nurses||[]).forEach(n=>{
+    let row=[n.name||''];
+    for(let d=1; d<=dayCount; d++){
+      const key=makeDateKey(uiYear,uiMonth,d);
+      row.push(schedule[key]?.[n.id]||'');
+    }
+    row.push(String(stats[n.id]?.days||0), String(stats[n.id]?.evenings||0), String(stats[n.id]?.nights||0), String(stats[n.id]?.midDays||0), String(stats[n.id]?.totalOff||0), String(stats[n.id]?.weekendHolidayOff||0));
+    rows.push(row);
+  });
+  const csv = rows.map(r=>r.map(v=>{
+    const s=String(v??'');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  }).join(',')).join('\r\n');
+  const bom = '\ufeff';
+  const blob = new Blob([bom + csv], {type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`${ward.name}_${uiYear}_${String(uiMonth).padStart(2,'0')}_근무표.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function renderGenerateSummary(){
+  const ward=getCurrentWard();
+  if(!ward) return '';
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  const schedule=draft.schedule||{};
+  const nurses=(ward.nurses||[]).filter(n=>n.employmentStatus!=='leave' && n.employmentStatus!=='inactive');
+  const stats=summarizeSchedule(schedule,nurses,uiYear,uiMonth);
+  const targetOff=(holidayCountForMonth(uiYear,uiMonth) + Number((ward.additionalOffByMonth||{})[monthKey(uiYear,uiMonth)]||0));
+  const issues=[];
+  const need={D:Number(ward.staffingRules?.D?.min ?? ward.shiftsRequired?.D ?? 0), E:Number(ward.staffingRules?.E?.min ?? ward.shiftsRequired?.E ?? 0), N:Number(ward.staffingRules?.N?.min ?? ward.shiftsRequired?.N ?? 0)};
+  function count(key,shift){ return nurses.filter(n=>schedule[key]?.[n.id]===shift).length; }
+  function expCount(key,shift){ return nurses.filter(n=>schedule[key]?.[n.id]===shift && !getNurseConstraints(n).isNew).length; }
+  function isRestricted(n,dtype){ const c=getNurseConstraints(n); return (dtype==='sat'&&c.satRestricted)||((dtype==='holiday'||dtype==='sun')&&c.holidayRestricted)||((dtype==='sat'||dtype==='sun'||dtype==='holiday')&&c.weekendRestricted); }
+  for(let d=1; d<=daysInMonth(uiYear,uiMonth); d++){
+    const key=makeDateKey(uiYear,uiMonth,d), dtype=getDateType(uiYear,uiMonth,d);
+    ['D','E','N'].forEach(shift=>{ const cnt=count(key,shift); if(cnt < (need[shift]||0)) issues.push(`${key} ${shift} 인원 부족 (${cnt}/${need[shift]})`); });
+    nurses.forEach(n=>{
+      const code=schedule[key]?.[n.id]||'';
+      if(['D','E','N','MD','SD6'].includes(code) && isRestricted(n,dtype)) issues.push(`${key} ${n.name} 배치제한 위반 (${dtype} ${code})`);
+      if(getNurseConstraints(n).isNew && ['D','E','N'].includes(code) && expCount(key,code)===0) issues.push(`${key} ${n.name} 신규 단독근무 위험 (${code})`);
+    });
+  }
+  nurses.forEach(n=>{
+    const totalOff=Number(stats[n.id]?.totalOff||0);
+    if(totalOff < targetOff) issues.push(`${n.name} OFF 부족 (${totalOff}/${targetOff})`);
+  });
+  const nightEligible=nurses.filter(n=>getAllowedCodes(n).map(c=>String(c).toUpperCase()).includes('N')&&!getNurseConstraints(n).reduceNight);
+  const nightCounts=nightEligible.map(n=>stats[n.id]?.nights||0);
+  if(nightCounts.length>1 && Math.max(...nightCounts)-Math.min(...nightCounts)>1) issues.push(`N 균등 분배 확인 필요 (${Math.min(...nightCounts)}~${Math.max(...nightCounts)})`);
+  const unique=[...new Set(issues)];
+  if(unique.length===0) return `<div class="ok" style="margin-top:8px">근무인원 부족, 배치제한 위반, 신규 단독근무 위험 없음 · 현재 표 기준 점검 완료</div>`;
+  return `<div><div class="alert" style="margin-top:8px"><strong>근무표 확인 필요</strong></div>${unique.map(w=>`<div class="alert" style="margin-top:8px">${w}</div>`).join('')}</div>`;
+}
+
+function renderScheduleTable(ward,schedule,stats,editable=false){
+  const dayCount=daysInMonth(uiYear,uiMonth);
+  const codeOptions=getAvailableScheduleCodes();
+  const nurses=(ward.nurses||[]);
+  const workSummaryRows=[
+    {label:'D 명수', codes:['D'], className:'daily-count-row'},
+    {label:'E 명수', codes:['E'], className:'daily-count-row'},
+    {label:'N 명수', codes:['N'], className:'daily-count-row'},
+    {label:'MD/SD6 명수', codes:['MD','SD6'], className:'daily-count-row'},
+    {label:'OFF 명수', codes:['O','OF','WO','AL','SL'], className:'daily-count-row'}
+  ];
+  function countCodesOnDay(day, codes){
+    const key=makeDateKey(uiYear,uiMonth,day);
+    return nurses.filter(n=>codes.includes(String(schedule[key]?.[n.id]||'').toUpperCase())).length;
+  }
+  function countCodesInMonth(codes){
+    let total=0;
+    for(let d=1; d<=dayCount; d++) total += countCodesOnDay(d,codes);
+    return total;
+  }
+  let html='<div class="schedule-wrap"><table><thead><tr><th class="sticky">간호사</th>';
+  for(let d=1;d<=dayCount;d++){
+    const dayClass=getDayNumberClass(uiYear,uiMonth,d);
+    const dowClass=getDowClass(uiYear,uiMonth,d);
+    const key=makeDateKey(uiYear,uiMonth,d);
+    const memo=getHolidayMemoByDate(key);
+    html+=`<th><div class="${dayClass}">${d}</div><div class="small ${dowClass}">${getDowLabel(uiYear,uiMonth,d)}</div>${memo?`<div class="holiday-note" style="margin-top:4px">${escapeHtml(memo)}</div>`:''}</th>`;
+  }
+  html+='<th>D 횟수</th><th>E 횟수</th><th>N 횟수</th><th>MD 횟수</th><th>OFF 개수</th><th>주말/휴일 OFF</th></tr></thead><tbody>';
+  nurses.forEach(n=>{
+    html+=`<tr><td class="sticky"><div><strong>${escapeHtml(n.name)}</strong></div></td>`;
+    for(let d=1;d<=dayCount;d++){
+      const key=makeDateKey(uiYear,uiMonth,d), code=schedule[key]?.[n.id]||'';
+      if(editable){
+        html+=`<td class="schedule-code-cell"><select class="schedule-cell-select" onchange="updateScheduleCellDraft('${ward.id}',${uiYear},${uiMonth},'${key}','${n.id}',this.value)"><option value=""></option>${codeOptions.map(c=>`<option value="${c}" ${c===code?'selected':''}>${c}</option>`).join('')}</select></td>`;
+      } else {
+        html+=`<td class="schedule-code-cell">${escapeHtml(code)}</td>`;
+      }
+    }
+    html+=`<td>${stats[n.id]?.days||0}</td><td>${stats[n.id]?.evenings||0}</td><td>${stats[n.id]?.nights||0}</td><td>${stats[n.id]?.midDays||0}</td><td>${stats[n.id]?.totalOff||0}</td><td>${stats[n.id]?.weekendHolidayOff||0}</td></tr>`;
+  });
+
+  // 날짜별 근무코드 인원 집계: 각 날짜에 D/E/N/OFF/MD가 몇 명인지 바로 확인
+  html += `<tr><td class="sticky" colspan="${dayCount+7}" style="background:#f8fafc;font-weight:700;text-align:left">날짜별 근무코드 인원 집계</td></tr>`;
+  workSummaryRows.forEach(row=>{
+    html += `<tr class="${row.className}"><td class="sticky" style="background:#f8fafc;font-weight:700">${row.label}</td>`;
+    for(let d=1; d<=dayCount; d++){
+      const cnt=countCodesOnDay(d,row.codes);
+      html += `<td style="background:#f8fafc;font-weight:700">${cnt}</td>`;
+    }
+    const monthTotal=countCodesInMonth(row.codes);
+    html += `<td colspan="6" style="background:#f8fafc;font-weight:700;text-align:left">월 합계 ${monthTotal}</td></tr>`;
+  });
+
+  html+='</tbody></table></div>'; return html;
+}
+function renderWardSchedule(){
+  const ward=getCurrentWard(), el=document.getElementById('tab-ward-schedule');
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  const schedule=draft.schedule||{}, stats=summarizeSchedule(schedule,ward.nurses,uiYear,uiMonth);
+  el.innerHTML=`
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <h3>${ward.name} 근무표</h3>
+          <div class="sub">자동 생성 후 근무코드를 확인하고, 수정 버튼으로 임의 수정한 뒤 저장할 수 있습니다.</div>
+        </div>
+        <div class="row">
+          <input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); renderWardSchedule()">
+          <input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); renderWardSchedule()">
+          <button class="primary" type="button" onclick="runWardGenerator()">자동 생성</button>
+          <button type="button" onclick="cancelWardGeneratedSchedule()">취소</button>
+          <button type="button" onclick="enableWardScheduleEdit()">수정 모드</button>
+          
+          <button type="button" onclick="exportWardScheduleExcel()">엑셀다운로드</button>
+        </div>
+      </div>
+      <div style="height:12px"></div>
+      ${renderScheduleTable(ward,schedule,stats,draft.edit===true)}
+      <div style="height:12px"></div>
+      
+<div style="margin-top:10px">
+  <h4 style="margin-bottom:6px">근무표 점검 결과</h4>
+  ${renderGenerateSummary() || '<div class="muted">이상 없음</div>'}
+</div>
+
+    </div>`;
+}
+function renderWardCalendar(){
+  const ward=getCurrentWard(), el=document.getElementById('tab-ward-calendar');
+  const ownEvents=ward.calendarEvents||[];
+  const adminSharedEvents=(data.systemEvents||[]).sort((a,b)=>(a.date+a.startTime).localeCompare(b.date+b.startTime));
+  el.innerHTML=`
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><div><h3>병동 달력</h3><div class="sub">관리자 공유 일정 + 병동 일정.  시 공유 여부를 선택할 수 있습니다.</div></div><div class="row"><input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); renderApp()"><input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); renderApp()"></div></div>
+      <div style="height:12px"></div><div id="wardCalendarBox"></div>
+    </div>
+    <div class="card">
+      <h3>병동 일정 목록</h3><div style="height:12px"></div>
+      ${ownEvents.map(e=>`<div class="item" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><div><strong>${e.date}</strong>${e.startTime&&e.endTime?` ${e.startTime}~${e.endTime}`:(e.startTime?` ${e.startTime}`:(e.time?` ${e.time}`:''))} · ${escapeHtml(e.title)} ${e.shareAll?'<span class="badge">간호부 공유</span>':''}</div><button class="danger" onclick="deleteWardEvent('${e.id}')">삭제</button></div></div>`).join('') || '<div class="muted">등록된 병동 일정이 없습니다.</div>'}
+    </div>
+    <div class="card">
+      <h3>간호부 공유 일정 목록</h3><div class="height:12px"></div>
+      ${adminSharedEvents.map(e=>`<div class="item" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><div><strong>${e.date}</strong>${e.startTime&&e.endTime?` ${e.startTime}~${e.endTime}`:(e.startTime?` ${e.startTime}`:(e.time?` ${e.time}`:''))} · ${escapeHtml(e.title)} <span class="badge">관리자 입력</span></div><button onclick="manageEvent('system','${e.id}')">열기</button></div></div>`).join('') || '<div class="muted">등록된 간호부 공유 일정이 없습니다.</div>'}
+    </div>`;
+  renderMonthCalendar('wardCalendarBox',uiYear,uiMonth,ward.id,'edit');
+}
+function deleteWardEvent(id){ const ward=getCurrentWard(); ward.calendarEvents=ward.calendarEvents.filter(e=>e.id!==id); saveData(); renderApp(); }
+
+
+function syncFromStorageSilently(){
+  // Firebase 사용 시 localStorage는 임시 백업일 뿐입니다. 다른 탭 변경은 Firebase watchFirebaseData에서 반영합니다.
+  if(window.nurseDb) return;
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw || raw===lastSavedSnapshot) return;
+    const incoming = JSON.parse(raw);
+    if(!incoming) return;
+    data = incoming;
+    ensureDataDefaults();
+    ensureShiftCodeWorkTypeConsistency();
+    lastSavedSnapshot = raw;
+    if(currentUser){
+      if(currentUser.role==='ward'){
+        const refreshedUser = (data.users||[]).find(u=>u.loginId===currentUser.loginId && u.password===currentUser.password);
+        if(refreshedUser) currentUser = refreshedUser;
+      } else {
+        const refreshedAdmin = (data.users||[]).find(u=>u.loginId===currentUser.loginId && u.role==='admin');
+        if(refreshedAdmin) currentUser = refreshedAdmin;
+      }
+      renderApp();
+      popup('다른 화면의 변경사항이 자동 반영되었습니다.');
+    }
+  }catch(e){}
+}
+
+window.addEventListener('storage', function(e){
+  if(e.key===STORAGE_KEY){ syncFromStorageSilently(); }
+});
+
+setInterval(function(){
+  syncFromStorageSilently();
+}, 1500);
+
+
+function toggleTimeSelectMode(sel, forceOpen){
+  if(!sel) return;
+  if(forceOpen){
+    sel.classList.remove('time-select-collapsed');
+    sel.classList.add('time-select-open');
+    sel.setAttribute('size','4');
+  } else {
+    sel.classList.remove('time-select-open');
+    sel.classList.add('time-select-collapsed');
+    sel.removeAttribute('size');
+  }
+}
+function attachTimeSelectBehavior(){
+  document.querySelectorAll('select[data-time-select="1"]').forEach(function(sel){
+    if(sel.dataset.bound === '1') return;
+    sel.dataset.bound = '1';
+    toggleTimeSelectMode(sel, false);
+
+    sel.addEventListener('focus', function(){
+      toggleTimeSelectMode(sel, true);
+    });
+    sel.addEventListener('mousedown', function(){
+      toggleTimeSelectMode(sel, true);
+    });
+    sel.addEventListener('change', function(){
+      toggleTimeSelectMode(sel, false);
+    });
+    sel.addEventListener('blur', function(){
+      setTimeout(function(){ toggleTimeSelectMode(sel, false); }, 100);
+    });
+  });
+}
+
+
+window.addEventListener('error', function(e){
+  const err=document.getElementById('loginError');
+  if(err && !currentUser){
+    err.textContent='스크립트 오류가 발생했습니다. 최신 파일로 다시 실행해 주세요.';
+    err.classList.remove('hidden');
+  }
+});
+
+window.onload=function(){
+  document.getElementById('loginScreen').classList.remove('hidden');
+  document.getElementById('appScreen').classList.add('hidden');
+};
+</script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, set, get, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDQamHfuYlxB7QYrofNEgm3czvuL2Qnhw0",
+  authDomain: "nurse-scheduler-8d58e.firebaseapp.com",
+  databaseURL: "https://nurse-scheduler-8d58e-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nurse-scheduler-8d58e",
+  storageBucket: "nurse-scheduler-8d58e.firebasestorage.app",
+  messagingSenderId: "445021515349",
+  appId: "1:445021515349:web:d6cda4efa65a14d4976edc"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+window.nurseDb = {
+  ref: function(path){
+    const dbRef = ref(db, path);
+    return {
+      get: function(){ return get(dbRef); },
+      set: function(value){ return set(dbRef, value); },
+      on: function(eventName, callback){
+        if(eventName === 'value') return onValue(dbRef, callback);
+        console.warn('지원하지 않는 Firebase 이벤트:', eventName);
+      }
+    };
+  }
+};
+window.NURSE_DB_PATH = 'nurseScheduler';
+
+window.nurseFirebaseReady = (typeof window.loadFirebaseDataOnStart === 'function')
+  ? window.loadFirebaseDataOnStart().then(function(){
+      if (typeof window.watchFirebaseData === 'function') window.watchFirebaseData();
+      return true;
+    }).catch(function(e){ console.warn('Firebase 초기 로드 실패:', e); return false; })
+  : Promise.resolve(false);
+</script></body>
+</html>
