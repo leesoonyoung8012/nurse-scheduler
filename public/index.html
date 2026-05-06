@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>간호사 3교대 근무표 AI 스케줄러 v8</title>
+<title>간호사 3교대 근무표 AI 스케줄러 v9</title>
 <style>
     :root{
       --bg:#f8fafc;--card:#fff;--line:#e2e8f0;--text:#0f172a;--muted:#64748b;
@@ -252,6 +252,7 @@ function addNurse(){
     employmentStatus:'active'
   });
   nurseDraftState[ward.id]=rows;
+  queueNurseDraftAutoSave();
   renderWardNurses();
 }
 
@@ -259,6 +260,7 @@ const STORAGE_KEY='nurse-shift-scheduler-v4-html';
 const legacyKeys=['nurse-shift-scheduler-v3-html','nurse-shift-scheduler-v2-html','nurse-shift-scheduler-v1-html'];
 let currentUser=null, activeTab='', uiYear=new Date().getFullYear(), uiMonth=new Date().getMonth()+1, resultCache=null;
 let nurseDraftState={};
+let nurseAutoSaveTimer=null;
 let scheduleDraftState={};
 let preselectNewWorkTypeShiftCodeId='';
 let data=loadData();
@@ -327,6 +329,7 @@ function ensureDataDefaults(){
   if(!Array.isArray(data.generationRules)) data.generationRules = [...base.generationRules];
   if(!Array.isArray(data.systemEvents)) data.systemEvents = [...base.systemEvents];
   if(!Array.isArray(data.changeRequests)) data.changeRequests = [];
+  ensureCoreGenerationRules();
 
   data.shiftCodes = (data.shiftCodes||[]).map(s => ({
     id:s.id || ('sc-'+Math.random().toString(36).slice(2)),
@@ -347,12 +350,31 @@ function ensureDataDefaults(){
     if(!w.additionalOffByMonth) w.additionalOffByMonth={};
     if(!w.requests) w.requests=[];
     if(!w.schedule) w.schedule={};
+    if(!w.schedulesByMonth || typeof w.schedulesByMonth !== 'object') w.schedulesByMonth={};
     if(!w.leaveRequests) w.leaveRequests = Array.isArray(w.requests) ? [...w.requests] : [];
     (w.nurses||[]).forEach(n=>{
       if(!Array.isArray(n.workTypeIds)) n.workTypeIds = Array.isArray(n.selectedWorkTypes) ? [...n.selectedWorkTypes] : [];
       if(!Array.isArray(n.placementRuleIds)) n.placementRuleIds = Array.isArray(n.selectedPlacementRules) ? [...n.selectedPlacementRules] : [];
     });
   });
+}
+
+
+function ensureCoreGenerationRules(){
+  if(!data.commonScheduleSettings) data.commonScheduleSettings={};
+  if(!Array.isArray(data.generationRules)) data.generationRules=[];
+  const existing=data.generationRules.find(r=>r.key==='enforcePreviousMonthTransition' || String(r.name||'').includes('전달 마지막 근무'));
+  if(!existing){
+    data.generationRules.unshift({id:'gr-prev-transition', name:'전달 마지막 근무 연속성 최우선 적용 (E→D 금지, N→D/E 금지)', key:'enforcePreviousMonthTransition', enabled:true, priority:1});
+  } else {
+    existing.name='전달 마지막 근무 연속성 최우선 적용 (E→D 금지, N→D/E 금지)';
+    existing.key='enforcePreviousMonthTransition';
+    existing.enabled = existing.enabled !== false;
+    existing.priority = 1;
+  }
+  data.commonScheduleSettings.enforcePreviousMonthTransition = data.commonScheduleSettings.enforcePreviousMonthTransition !== false;
+  data.generationRules.sort((a,b)=>Number(a.priority||999)-Number(b.priority||999));
+  data.generationRules.forEach((r,idx)=>{ r.priority=idx+1; if(r.key) data.commonScheduleSettings[r.key]=r.enabled!==false; });
 }
 
 async function loadFirebaseDataOnStart(){
@@ -424,6 +446,8 @@ function watchFirebaseData(){
       localStorage.setItem(STORAGE_KEY, fixedText);
       lastSavedSnapshot = fixedText;
       if(currentUser){
+        nurseDraftState={};
+        scheduleDraftState={};
         const refreshed = (data.users||[]).find(u => u.loginId === currentUser.loginId && u.role === currentUser.role);
         if(refreshed) currentUser = refreshed;
         renderApp();
@@ -573,14 +597,15 @@ function defaultData(){
       {date:'2026-05-05',type:'법정공휴일',note:'어린이날'},
       {date:'2026-05-25',type:'대체공휴일',note:'대체공휴일'}
     ],
-    commonScheduleSettings:{ defaultMaxNightPerMonth:6, defaultMaxConsecutiveDays:5, balanceDEN:true, balanceTeams:true, rotateNight:true, reduceNightForMarked:true, wantedOffFirst:true, enforceMinStaffing:true, fillRemainingWithWork:true, allowWantedOffOverTarget:true },
+    commonScheduleSettings:{ defaultMaxNightPerMonth:6, defaultMaxConsecutiveDays:5, balanceDEN:true, balanceTeams:true, rotateNight:true, reduceNightForMarked:true, wantedOffFirst:true, enforceMinStaffing:true, fillRemainingWithWork:true, allowWantedOffOverTarget:true, enforcePreviousMonthTransition:true },
     generationRules:[
-      {id:'gr-1', name:'원티드 off 무조건 반영', key:'wantedOffFirst', enabled:true, priority:1},
-      {id:'gr-2', name:'근무 shift 최소인원 충족 우선', key:'enforceMinStaffing', enabled:true, priority:2},
-      {id:'gr-3', name:'D/E/N 균등 배분', key:'balanceDEN', enabled:true, priority:3},
-      {id:'gr-4', name:'최소인원 충족 후 남는 인원은 근무로 채우기', key:'fillRemainingWithWork', enabled:true, priority:4},
-      {id:'gr-5', name:'원티드 off는 최종 off 초과 허용', key:'allowWantedOffOverTarget', enabled:true, priority:5},
-      {id:'gr-6', name:'팀별 균형', key:'balanceTeams', enabled:true, priority:6}
+      {id:'gr-prev-transition', name:'전달 마지막 근무 연속성 최우선 적용 (E→D 금지, N→D/E 금지)', key:'enforcePreviousMonthTransition', enabled:true, priority:1},
+      {id:'gr-1', name:'원티드 off 무조건 반영', key:'wantedOffFirst', enabled:true, priority:2},
+      {id:'gr-2', name:'근무 shift 최소인원 충족 우선', key:'enforceMinStaffing', enabled:true, priority:3},
+      {id:'gr-3', name:'D/E/N 균등 배분', key:'balanceDEN', enabled:true, priority:4},
+      {id:'gr-4', name:'최소인원 충족 후 남는 인원은 근무로 채우기', key:'fillRemainingWithWork', enabled:true, priority:5},
+      {id:'gr-5', name:'원티드 off는 최종 off 초과 허용', key:'allowWantedOffOverTarget', enabled:true, priority:6},
+      {id:'gr-6', name:'팀별 균형', key:'balanceTeams', enabled:true, priority:7}
     ],
     workTypes:[
       {id:'wt-three',name:'3교대',allowedCodes:'D,E,N,O,AL,SL,WO',weekendRestricted:false,satRestricted:false,holidayRestricted:false},
@@ -617,11 +642,11 @@ function defaultData(){
         {id:'n3',name:'이단축',team:'C',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-pregnant','wt-short6'],selectedPlacementRules:['pl-sat-restrict','pl-holiday-restrict'],maxNightPerMonth:0,maxConsecutiveDays:4,notes:'임신근로자 / 6시간 단축'}
       ],requests:[
         {id:'r1',nurseId:'n1',date:'2026-05-10',type:'WO',priority:'preferred',note:'가족행사'}
-      ],schedule:{},additionalOffByMonth:{},calendarEvents:[]},
+      ],schedule:{},schedulesByMonth:{},additionalOffByMonth:{},calendarEvents:[]},
       {id:'ward-2',name:'52병동',shiftsRequired:{D:2,E:2,N:1},nurses:[
         {id:'n4',name:'최주간',team:'A',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-three'],selectedPlacementRules:[],maxNightPerMonth:5,maxConsecutiveDays:5,notes:''},
         {id:'n5',name:'정야간',team:'B',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-nightkeep'],selectedPlacementRules:[],maxNightPerMonth:14,maxConsecutiveDays:4,notes:'52병동 나이트 전담'}
-      ],requests:[],schedule:{},additionalOffByMonth:{},calendarEvents:[]}
+      ],requests:[],schedule:{},schedulesByMonth:{},additionalOffByMonth:{},calendarEvents:[]}
     ],
     systemEvents:[
       {id:'se1',date:'2026-05-15',title:'간호부 전체 회의',type:'hospital',shareAll:true,createdBy:'admin'}
@@ -756,6 +781,7 @@ function loadData(){
     if(!parsed.users.find(u=>u.role==='admin')) parsed.users.unshift(base.users[0]);
     if(!parsed.users.find(u=>u.loginId==='ward51')) parsed.users.push(base.users[1]);
     if(!parsed.users.find(u=>u.loginId==='ward52')) parsed.users.push(base.users[2]);
+    data = parsed; ensureCoreGenerationRules(); parsed = data;
     return parsed;
   }catch(e){ return base; }
 }
@@ -791,6 +817,34 @@ function popup(msg){ const el=document.getElementById('popup'); el.textContent=m
 function pad(v){ return String(v).padStart(2,'0'); }
 function makeDateKey(y,m,d){ return `${y}-${pad(m)}-${pad(d)}`; }
 function monthKey(y,m){ return `${y}-${pad(m)}`; }
+function getPrevMonthYearMonth(y,m){
+  return m===1 ? {y:y-1,m:12} : {y:y,m:m-1};
+}
+function getWardScheduleForMonth(ward,y,m){
+  normalizeWardStructure(ward);
+  const key=monthKey(y,m);
+  if(ward.schedulesByMonth && ward.schedulesByMonth[key]) return cloneJson(ward.schedulesByMonth[key]);
+  return cloneJson(ward.schedule||{});
+}
+function setWardScheduleForMonth(ward,y,m,schedule){
+  normalizeWardStructure(ward);
+  const key=monthKey(y,m);
+  ward.schedulesByMonth[key]=cloneJson(schedule||{});
+  ward.schedule=cloneJson(schedule||{}); // 기존 화면/백업 호환용: 마지막으로 저장한 근무표도 유지
+}
+function getPreviousMonthLastCode(ward,nurseId,y,m){
+  const prev=getPrevMonthYearMonth(y,m);
+  const prevSchedule=getWardScheduleForMonth(ward,prev.y,prev.m);
+  const lastDay=daysInMonth(prev.y,prev.m);
+  return String(prevSchedule[makeDateKey(prev.y,prev.m,lastDay)]?.[nurseId]||'').toUpperCase();
+}
+function violatesPrevToCurrentTransition(prevCode,nextCode){
+  const prev=String(prevCode||'').toUpperCase();
+  const next=String(nextCode||'').toUpperCase();
+  if(prev==='E' && next==='D') return true;
+  if(prev==='N' && (next==='D' || next==='E')) return true;
+  return false;
+}
 function daysInMonth(y,m){ return new Date(y,m,0).getDate(); }
 function getWardById(id){ return data.wards.find(w=>w.id===id); }
 function normalizeWardStructure(ward){
@@ -800,6 +854,7 @@ function normalizeWardStructure(ward){
   if(!Array.isArray(ward.requests)) ward.requests = [];
   if(!Array.isArray(ward.leaveRequests)) ward.leaveRequests = [];
   if(!ward.schedule || typeof ward.schedule !== 'object') ward.schedule = {};
+  if(!ward.schedulesByMonth || typeof ward.schedulesByMonth !== 'object') ward.schedulesByMonth = {};
   if(!ward.additionalOffByMonth || typeof ward.additionalOffByMonth !== 'object') ward.additionalOffByMonth = {};
   if(!Array.isArray(ward.calendarEvents)) ward.calendarEvents = [];
 
@@ -963,7 +1018,8 @@ function generateSchedule(ward,y,m){
     allowWantedOffOverTarget: !!ruleCommands.allowWantedOffOverTarget,
     balanceTeams: !!ruleCommands.balanceTeams,
     enforceNewNotAlone: ruleCommands.enforceNewNotAlone!==false,
-    excludeNewFromMinimum: !!ruleCommands.excludeNewFromMinimum
+    excludeNewFromMinimum: !!ruleCommands.excludeNewFromMinimum,
+    enforcePreviousMonthTransition: ruleCommands.enforcePreviousMonthTransition!==false
   };
   function staffingMin(){
     return {
@@ -1001,6 +1057,7 @@ function generateSchedule(ward,y,m){
   function dailyCount(date, shift){ return nurses.filter(n=>schedule[date]?.[n.id]===shift).length; }
   function experiencedCount(date, shift){ return nurses.filter(n=>schedule[date]?.[n.id]===shift && !getNurseConstraints(n).isNew).length; }
   function codeAt(day,nid){ return schedule[makeDateKey(y,m,day)]?.[nid]||''; }
+  function prevCodeAt(day,nid){ return day>1 ? String(codeAt(day-1,nid)||'').toUpperCase() : getPreviousMonthLastCode(ward,nid,y,m); }
   function isOff(code){ return !code || offCodes.includes(code); }
   function statNow(){ return summarizeSchedule(schedule,nurses,y,m); }
 
@@ -1034,7 +1091,11 @@ function generateSchedule(ward,y,m){
     const maxC=Number(n.maxConsecutiveDays ?? data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5);
     if(shift==='N' && (stats[n.id]?.nights||0) >= maxN && existing!=='N') return false;
     if(maxC>0 && consecutiveIf(n,day,shift)>maxC) return false;
+    const prevCode = prevCodeAt(day,n.id);
+    if(opt.enforcePreviousMonthTransition && violatesPrevToCurrentTransition(prevCode, shift)) return false;
     if(shift==='D' && codeAt(day-1,n.id)==='N') return false;
+    if(shift==='D' && codeAt(day-1,n.id)==='E') return false;
+    if(shift==='E' && codeAt(day-1,n.id)==='N') return false;
     if(shift==='N' && codeAt(day+1,n.id)==='D') return false;
 
     // 신규 원칙은 코드화된 공통 생성원칙으로 제어합니다.
@@ -1337,6 +1398,10 @@ function generateSchedule(ward,y,m){
         if(workCodes.includes(code) && isRestricted(n,dtype)) issues.push(`${key} ${n.name} 배치기준 위반 (${code})`);
         if(workCodes.includes(code) && !allAllowedCodes(n).includes(code)) issues.push(`${key} ${n.name} 근무유형 위반 (${code})`);
         if(opt.enforceNewNotAlone && c.isNew && ['D','E','N'].includes(code) && experiencedCount(key,code)===0) issues.push(`${key} ${n.name} 신규 단독근무 위험 (${code})`);
+        if(opt.enforcePreviousMonthTransition && d===1){
+          const prev=getPreviousMonthLastCode(ward,n.id,y,m);
+          if(violatesPrevToCurrentTransition(prev,code)) issues.push(`${key} ${n.name} 전달 마지막 근무 연속성 위반 (${prev}→${code})`);
+        }
       });
     }
     if(opt.balanceDEN){
@@ -1391,6 +1456,8 @@ async function login(){
     }
 
     currentUser=user;
+    nurseDraftState={};
+    scheduleDraftState={};
     activeTab = (user.role==='admin' ? 'admin-calendar' : 'ward-calendar');
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('appScreen').classList.remove('hidden');
@@ -1770,6 +1837,7 @@ function getGenerationRuleCommand(rule){
   const name=normalizeRuleTextForCode((rule&&rule.name)||'');
   const key=String((rule&&rule.key)||'');
   if(key && !key.startsWith('customRule_')) return key;
+  if(name.includes('전달마지막근무') || name.includes('전달') || name.includes('e→d') || name.includes('n→d') || name.includes('n→e')) return 'enforcePreviousMonthTransition';
   if(name.includes('근무유형') || name.includes('배치기준') || name.includes('절대위반') || name.includes('절대위반하지')) return 'hardConstraints';
   if(name.includes('원티드') || name.includes('wanted')) return 'wantedOffFirst';
   if(name.includes('신규') && name.includes('최소인원') && (name.includes('제외') || name.includes('포함시키지'))) return 'excludeNewFromMinimum';
@@ -1983,7 +2051,7 @@ function renderAdminOverview(){
     <div id="adminWardScheduleViewer" class="card hidden"></div>`;
 }
 function adminOpenWardSchedule(wardId){
-  const ward=getWardById(wardId), sched=ward.schedule||{}, stats=summarizeSchedule(sched,ward.nurses,uiYear,uiMonth);
+  const ward=getWardById(wardId), sched=getWardScheduleForMonth(ward,uiYear,uiMonth), stats=summarizeSchedule(sched,ward.nurses,uiYear,uiMonth);
   let head=`<div class="row" style="justify-content:space-between"><h3>${ward.name} 근무표 <span class="badge">v8 hard constraints</span></h3><button onclick="document.getElementById('adminWardScheduleViewer').classList.add('hidden')">닫기</button></div>`;
   let table=renderScheduleTable(ward,sched,stats);
   const box=document.getElementById('adminWardScheduleViewer'); box.classList.remove('hidden'); box.innerHTML=head+table;
@@ -1993,7 +2061,7 @@ function openAdminWardScheduleViewer(wardId){
   const ward=getWardById(wardId);
   const box=document.getElementById('adminWardScheduleViewer');
   if(!ward || !box) return;
-  const schedule=ward.schedule||{};
+  const schedule=getWardScheduleForMonth(ward,uiYear,uiMonth);
   const stats=summarizeSchedule(schedule, ward.nurses||[], uiYear, uiMonth);
   box.classList.remove('hidden');
   box.innerHTML=`
@@ -2150,6 +2218,7 @@ function createWardAndUser(){
     requests: [],
     leaveRequests: [],
     schedule: {},
+    schedulesByMonth: {},
     staffingRules: { D:{min:0,max:0}, E:{min:0,max:0}, N:{min:0,max:0} }
   };
   const newUser = {
@@ -2653,7 +2722,7 @@ function runAdminGenerator(){
   if(!ward) return alert('병동을 선택하세요.');
   uiYear=y; uiMonth=m;
   const generated=generateSchedule(ward,y,m);
-  ward.schedule=generated.schedule;
+  setWardScheduleForMonth(ward,y,m,generated.schedule);
   saveData(true);
   const box=document.getElementById('adminGenerateResult');
   if(box){
@@ -2696,6 +2765,17 @@ function updateWardStaffingRule(shift,key,val){
   saveData(true);
 }
 
+function queueNurseDraftAutoSave(){
+  clearTimeout(nurseAutoSaveTimer);
+  nurseAutoSaveTimer=setTimeout(()=>{
+    const ward=getCurrentWard();
+    if(!ward) return;
+    ensureWardDraftState();
+    ward.nurses=JSON.parse(JSON.stringify(nurseDraftState[ward.id]||[]));
+    saveData(true);
+  }, 350);
+}
+
 function ensureWardDraftState(){
   const ward=getCurrentWard();
   if(!ward) return;
@@ -2715,6 +2795,7 @@ function updateNurseDraft(id,key,val){
   const n=rows.find(x=>x.id===id);
   if(!n) return;
   n[key]=val;
+  queueNurseDraftAutoSave();
 }
 function toggleNurseDraftSelection(id,bucket,itemId,checked){
   const ward=getCurrentWard();
@@ -2728,7 +2809,16 @@ function toggleNurseDraftSelection(id,bucket,itemId,checked){
   } else {
     n[bucket]=n[bucket].filter(v=>v!==itemId);
   }
+  queueNurseDraftAutoSave();
 }
+function deleteNurse(id){
+  const ward=getCurrentWard();
+  ensureWardDraftState();
+  nurseDraftState[ward.id]=(nurseDraftState[ward.id]||[]).filter(n=>n.id!==id);
+  queueNurseDraftAutoSave();
+  renderWardNurses();
+}
+
 function saveWardNurseTable(){
   const ward=getCurrentWard();
   ensureWardDraftState();
@@ -2955,7 +3045,7 @@ function cloneJson(v){ return JSON.parse(JSON.stringify(v||{})); }
 function ensureScheduleDraft(ward,y,m){
   const key=getScheduleDraftKey(ward.id,y,m);
   if(!scheduleDraftState[key]){
-    scheduleDraftState[key]={ schedule: cloneJson(ward.schedule||{}), edit:false };
+    scheduleDraftState[key]={ schedule: getWardScheduleForMonth(ward,y,m), edit:false };
   }
   return scheduleDraftState[key];
 }
@@ -2976,7 +3066,7 @@ function runWardGenerator(){
   draft.edit=false;
   resultCache=generated;
   renderWardSchedule();
-  popup('자동 생성이 완료되었습니다.');
+  popup('자동 생성이 완료되었습니다. 저장 버튼을 눌러 최종 저장하세요.');
 }
 function enableWardScheduleEdit(){
   const ward=getCurrentWard();
@@ -2998,7 +3088,7 @@ function cancelWardGeneratedSchedule(){
 function saveWardSchedule(){
   const ward=getCurrentWard();
   const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
-  ward.schedule=cloneJson(draft.schedule);
+  setWardScheduleForMonth(ward,uiYear,uiMonth,draft.schedule);
   draft.edit=false;
   saveData(true);
   popup('근무표가 저장되었습니다.');
@@ -3060,6 +3150,10 @@ function renderGenerateSummary(){
       const code=schedule[key]?.[n.id]||'';
       if(['D','E','N','MD','SD6'].includes(code) && isRestricted(n,dtype)) issues.push(`${key} ${n.name} 배치제한 위반 (${dtype} ${code})`);
       if(getNurseConstraints(n).isNew && ['D','E','N'].includes(code) && expCount(key,code)===0) issues.push(`${key} ${n.name} 신규 단독근무 위험 (${code})`);
+      if(d===1){
+        const prev=getPreviousMonthLastCode(ward,n.id,uiYear,uiMonth);
+        if(violatesPrevToCurrentTransition(prev,code)) issues.push(`${key} ${n.name} 전달 마지막 근무 연속성 위반 (${prev}→${code})`);
+      }
     });
   }
   nurses.forEach(n=>{
@@ -3144,6 +3238,7 @@ function renderWardSchedule(){
         <div class="row">
           <input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); renderWardSchedule()">
           <input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); renderWardSchedule()">
+          <button class="primary" type="button" onclick="saveWardSchedule()">저장</button>
           <button class="primary" type="button" onclick="runWardGenerator()">자동 생성</button>
           <button type="button" onclick="cancelWardGeneratedSchedule()">취소</button>
           <button type="button" onclick="enableWardScheduleEdit()">수정 모드</button>
