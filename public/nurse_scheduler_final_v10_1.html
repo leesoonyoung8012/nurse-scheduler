@@ -231,6 +231,7 @@ select{
 <section class="section hidden" id="tab-ward-change"></section>
 <section class="section hidden" id="tab-ward-requests"></section>
 <section class="section hidden" id="tab-ward-schedule"></section>
+<section class="section hidden" id="tab-ward-archive"></section>
 <section class="section hidden" id="tab-ward-calendar"></section>
 <div class="footer-note">저장 위치: Firebase Realtime Database. 여러 부서/PC/모바일에서 동일 데이터가 공유됩니다. localStorage는 네트워크 장애 시 임시 백업으로만 사용됩니다.</div>
 </div>
@@ -855,6 +856,10 @@ function normalizeWardStructure(ward){
   if(!Array.isArray(ward.leaveRequests)) ward.leaveRequests = [];
   if(!ward.schedule || typeof ward.schedule !== 'object') ward.schedule = {};
   if(!ward.schedulesByMonth || typeof ward.schedulesByMonth !== 'object') ward.schedulesByMonth = {};
+  // 예전 단일 schedule 구조로 저장된 데이터도 현재 선택 월 보관함에 안전하게 이관합니다.
+  if(Object.keys(ward.schedule||{}).length && !ward.schedulesByMonth[monthKey(uiYear,uiMonth)]){
+    ward.schedulesByMonth[monthKey(uiYear,uiMonth)] = cloneJson(ward.schedule||{});
+  }
   if(!ward.additionalOffByMonth || typeof ward.additionalOffByMonth !== 'object') ward.additionalOffByMonth = {};
   if(!Array.isArray(ward.calendarEvents)) ward.calendarEvents = [];
 
@@ -1502,6 +1507,7 @@ function renderApp(){
     if(sec) sec.classList.remove('hidden');
     renderWardCalendar();
     renderWardSchedule();
+    renderWardScheduleArchive();
     renderWardLeave();
     renderWardNurses();
     renderWardChange();
@@ -1556,6 +1562,7 @@ function renderTabs(){
     tabs=[
       ['ward-calendar','병동 달력'],
       ['ward-schedule','근무표'],
+      ['ward-archive','근무표 보관함'],
       ['ward-leave','휴가신청'],
       ['ward-nurses','근무자 명단 및 근무 형태'],
       ['ward-change','관리자 요청']
@@ -2028,13 +2035,14 @@ function renderAdminOverview(){
   const cards=(data.wards||[]).map(w=>{
     const nurses=(w.nurses||[]).length;
     const reqs=(w.requests||[]).length;
-    const schedDays=Object.keys(w.schedule||{}).length;
+    const schedDays=Object.keys(getWardScheduleForMonth(w,uiYear,uiMonth)||{}).length;
+    const savedMonths=Object.keys(w.schedulesByMonth||{}).length;
     return `
       <div class="item">
         <div class="row" style="justify-content:space-between;align-items:flex-start">
           <div>
             <div style="font-size:18px;font-weight:700">${escapeHtml(w.name)}</div>
-            <div class="small muted" style="margin-top:6px">간호사 ${nurses}명 · 휴가/희망요청 ${reqs}건 · 스케줄 저장일수 ${schedDays}일</div>
+            <div class="small muted" style="margin-top:6px">간호사 ${nurses}명 · 휴가/희망요청 ${reqs}건 · 현재월 저장일수 ${schedDays}일 · 보관월 ${savedMonths}개</div>
           </div>
           <button type="button" onclick="openAdminWardScheduleViewer('${w.id}')">근무표 보기</button>
         </div>
@@ -3082,7 +3090,44 @@ function cancelWardGeneratedSchedule(){
   delete scheduleDraftState[key];
   resultCache=null;
   renderWardSchedule();
-  popup('자동 생성 결과가 취소되었습니다.');
+  popup('저장 전 임시 자동생성 결과가 취소되었습니다. 이미 저장한 근무표는 전체삭제 버튼으로 삭제하세요.');
+}
+
+function deleteCurrentMonthWardSchedule(){
+  const ward=getCurrentWard();
+  if(!ward) return;
+  normalizeWardStructure(ward);
+  const currentMonthKey=monthKey(uiYear,uiMonth);
+  const savedSchedule=cloneJson(ward.schedulesByMonth?.[currentMonthKey] || {});
+  const hasSaved=Object.keys(savedSchedule||{}).length>0;
+  const draftKey=getScheduleDraftKey(ward.id,uiYear,uiMonth);
+  const draftSchedule=cloneJson(scheduleDraftState[draftKey]?.schedule || {});
+  const hasDraft=Object.keys(draftSchedule||{}).length>0;
+  if(!hasSaved && !hasDraft){
+    alert('삭제할 근무표가 없습니다.');
+    return;
+  }
+  if(!confirm(`${currentMonthKey} 근무표를 전체 삭제할까요? 저장된 보관본과 현재 화면의 근무표가 모두 비워집니다.`)) return;
+
+  if(ward.schedulesByMonth && ward.schedulesByMonth[currentMonthKey]){
+    delete ward.schedulesByMonth[currentMonthKey];
+  }
+
+  // ward.schedule은 기존 화면/관리자 조회 호환용 백업이므로, 현재 삭제 대상과 같으면 함께 비웁니다.
+  try{
+    if(JSON.stringify(ward.schedule||{}) === JSON.stringify(savedSchedule||{}) || JSON.stringify(ward.schedule||{}) === JSON.stringify(draftSchedule||{})){
+      ward.schedule={};
+    }
+  }catch(e){
+    ward.schedule={};
+  }
+
+  scheduleDraftState[draftKey]={schedule:{}, edit:false};
+  resultCache=null;
+  saveData(true);
+  renderWardSchedule();
+  renderWardScheduleArchive();
+  popup('해당 월 근무표가 전체 삭제되었습니다.');
 }
 
 function saveWardSchedule(){
@@ -3091,45 +3136,124 @@ function saveWardSchedule(){
   setWardScheduleForMonth(ward,uiYear,uiMonth,draft.schedule);
   draft.edit=false;
   saveData(true);
-  popup('근무표가 저장되었습니다.');
+  popup('근무표가 저장되었고 보관함에 월별로 보관되었습니다.');
   renderWardSchedule();
+  renderWardScheduleArchive();
 }
-function exportWardScheduleExcel(){
-  const ward=getCurrentWard();
-  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
-  const schedule=draft.schedule||{};
-  const stats=summarizeSchedule(schedule,ward.nurses,uiYear,uiMonth);
-  const dayCount=daysInMonth(uiYear,uiMonth);
-  let rows=[];
-  let header=['간호사'];
+function buildStyledExcelHtml(ward,schedule,stats,y,m){
+  const dayCount=daysInMonth(y,m);
+  const nurses=(ward.nurses||[]);
+  const codeStyle={
+    D:'background:#dbeafe;color:#1e3a8a;font-weight:bold;',
+    E:'background:#fef3c7;color:#92400e;font-weight:bold;',
+    N:'background:#ede9fe;color:#5b21b6;font-weight:bold;',
+    O:'background:#f1f5f9;color:#334155;font-weight:bold;',
+    OF:'background:#f1f5f9;color:#334155;font-weight:bold;',
+    WO:'background:#e0f2fe;color:#075985;font-weight:bold;',
+    AL:'background:#dcfce7;color:#166534;font-weight:bold;',
+    SL:'background:#fee2e2;color:#991b1b;font-weight:bold;',
+    MD:'background:#fce7f3;color:#9d174d;font-weight:bold;',
+    SD6:'background:#fce7f3;color:#9d174d;font-weight:bold;'
+  };
+  const border='border:1px solid #94a3b8;text-align:center;vertical-align:middle;padding:5px;mso-number-format:"\\@";';
+  const header='background:#1d4ed8;color:#ffffff;font-weight:bold;'+border;
+  const nameCell='background:#f8fafc;font-weight:bold;text-align:left;'+border;
+  const summary='background:#e2e8f0;font-weight:bold;'+border;
+  const title='font-size:18px;font-weight:bold;text-align:left;padding:8px;';
+  let html=`<html><head><meta charset="utf-8"><style>table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt;} .sat{color:#2563eb;font-weight:bold}.sun{color:#dc2626;font-weight:bold}</style></head><body>`;
+  html+=`<table><tr><td colspan="${dayCount+7}" style="${title}">${escapeHtml(ward.name)} ${y}년 ${m}월 근무표</td></tr>`;
+  html+='<tr><td style="'+header+'">간호사</td>';
   for(let d=1; d<=dayCount; d++){
-    header.push(String(d));
+    const key=makeDateKey(y,m,d);
+    const type=getDateType(y,m,d);
+    const dow=getDowLabel(y,m,d);
+    const color=(type==='sat')?'color:#2563eb;':((type==='sun'||type==='holiday')?'color:#dc2626;':'');
+    const memo=getHolidayMemoByDate(key);
+    html+=`<td style="${header}${color}">${d}<br>${dow}${memo?`<br>${escapeHtml(memo)}`:''}</td>`;
   }
-  header.push('D 횟수','E 횟수','N 횟수','MD 횟수','OFF 개수','주말/휴일 OFF');
-  rows.push(header);
-  (ward.nurses||[]).forEach(n=>{
-    let row=[n.name||''];
+  ['D 횟수','E 횟수','N 횟수','MD 횟수','OFF 개수','주말/휴일 OFF'].forEach(h=>html+=`<td style="${header}">${h}</td>`);
+  html+='</tr>';
+  nurses.forEach(n=>{
+    html+=`<tr><td style="${nameCell}">${escapeHtml(n.name||'')}</td>`;
     for(let d=1; d<=dayCount; d++){
-      const key=makeDateKey(uiYear,uiMonth,d);
-      row.push(schedule[key]?.[n.id]||'');
+      const key=makeDateKey(y,m,d);
+      const code=String(schedule[key]?.[n.id]||'').toUpperCase();
+      html+=`<td style="${border}${codeStyle[code]||''}">${escapeHtml(code)}</td>`;
     }
-    row.push(String(stats[n.id]?.days||0), String(stats[n.id]?.evenings||0), String(stats[n.id]?.nights||0), String(stats[n.id]?.midDays||0), String(stats[n.id]?.totalOff||0), String(stats[n.id]?.weekendHolidayOff||0));
-    rows.push(row);
+    html+=`<td style="${border}">${stats[n.id]?.days||0}</td><td style="${border}">${stats[n.id]?.evenings||0}</td><td style="${border}">${stats[n.id]?.nights||0}</td><td style="${border}">${stats[n.id]?.midDays||0}</td><td style="${border}">${stats[n.id]?.totalOff||0}</td><td style="${border}">${stats[n.id]?.weekendHolidayOff||0}</td></tr>`;
   });
-  const csv = rows.map(r=>r.map(v=>{
-    const s=String(v??'');
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
-  }).join(',')).join('\r\n');
-  const bom = '\ufeff';
-  const blob = new Blob([bom + csv], {type:'text/csv;charset=utf-8;'});
+  const workSummaryRows=[
+    {label:'D 명수', codes:['D']},
+    {label:'E 명수', codes:['E']},
+    {label:'N 명수', codes:['N']},
+    {label:'MD/SD6 명수', codes:['MD','SD6']},
+    {label:'OFF 명수', codes:['O','OF','WO','AL','SL']}
+  ];
+  function countCodesOnDay(day, codes){
+    const key=makeDateKey(y,m,day);
+    return nurses.filter(n=>codes.includes(String(schedule[key]?.[n.id]||'').toUpperCase())).length;
+  }
+  html+=`<tr><td colspan="${dayCount+7}" style="${summary};text-align:left">날짜별 근무코드 인원 집계</td></tr>`;
+  workSummaryRows.forEach(row=>{
+    html+=`<tr><td style="${summary}">${row.label}</td>`;
+    let monthTotal=0;
+    for(let d=1; d<=dayCount; d++){
+      const cnt=countCodesOnDay(d,row.codes); monthTotal+=cnt;
+      html+=`<td style="${summary}">${cnt}</td>`;
+    }
+    html+=`<td colspan="6" style="${summary};text-align:left">월 합계 ${monthTotal}</td></tr>`;
+  });
+  html+='</table></body></html>';
+  return html;
+}
+function downloadStyledExcel(ward,schedule,y,m){
+  const stats=summarizeSchedule(schedule,ward.nurses,y,m);
+  const html=buildStyledExcelHtml(ward,schedule,stats,y,m);
+  const blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel;charset=utf-8;'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download=`${ward.name}_${uiYear}_${String(uiMonth).padStart(2,'0')}_근무표.csv`;
+  a.download=`${ward.name}_${y}_${String(m).padStart(2,'0')}_근무표.xls`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
+function exportWardScheduleExcel(){
+  const ward=getCurrentWard();
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  downloadStyledExcel(ward,draft.schedule||{},uiYear,uiMonth);
+}
+function exportArchivedScheduleExcel(monthKeyText){
+  const ward=getCurrentWard();
+  const parts=String(monthKeyText||'').split('-');
+  const y=Number(parts[0]), m=Number(parts[1]);
+  if(!y || !m) return alert('월 정보를 확인할 수 없습니다.');
+  const schedule=getWardScheduleForMonth(ward,y,m);
+  downloadStyledExcel(ward,schedule,y,m);
+}
+function openArchivedScheduleMonth(monthKeyText){
+  const parts=String(monthKeyText||'').split('-');
+  const y=Number(parts[0]), m=Number(parts[1]);
+  if(!y || !m) return alert('월 정보를 확인할 수 없습니다.');
+  const ward=getCurrentWard();
+  uiYear=y; uiMonth=m;
+  const draftKey=getScheduleDraftKey(ward.id,y,m);
+  scheduleDraftState[draftKey]={schedule:getWardScheduleForMonth(ward,y,m), edit:false};
+  activeTab='ward-schedule';
+  renderApp();
+}
+function deleteArchivedScheduleMonth(monthKeyText){
+  const ward=getCurrentWard();
+  if(!ward.schedulesByMonth || !ward.schedulesByMonth[monthKeyText]) return;
+  if(!confirm(`${monthKeyText} 근무표 보관본을 삭제할까요?`)) return;
+  delete ward.schedulesByMonth[monthKeyText];
+  const draftKey=getScheduleDraftKey(ward.id,Number(monthKeyText.slice(0,4)),Number(monthKeyText.slice(5,7)));
+  delete scheduleDraftState[draftKey];
+  saveData(true);
+  renderWardScheduleArchive();
+  popup('보관 근무표가 삭제되었습니다.');
+}
+
 function renderGenerateSummary(){
   const ward=getCurrentWard();
   if(!ward) return '';
@@ -3233,7 +3357,7 @@ function renderWardSchedule(){
       <div class="row" style="justify-content:space-between;align-items:center">
         <div>
           <h3>${ward.name} 근무표</h3>
-          <div class="sub">자동 생성 후 근무코드를 확인하고, 수정 버튼으로 임의 수정한 뒤 저장할 수 있습니다.</div>
+          <div class="sub">자동 생성 후 근무코드를 확인하고, 저장 버튼을 누르면 해당 월 근무표가 보관함에 월별로 누적 저장됩니다.</div>
         </div>
         <div class="row">
           <input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); renderWardSchedule()">
@@ -3241,6 +3365,7 @@ function renderWardSchedule(){
           <button class="primary" type="button" onclick="saveWardSchedule()">저장</button>
           <button class="primary" type="button" onclick="runWardGenerator()">자동 생성</button>
           <button type="button" onclick="cancelWardGeneratedSchedule()">취소</button>
+          <button class="danger" type="button" onclick="deleteCurrentMonthWardSchedule()">전체삭제</button>
           <button type="button" onclick="enableWardScheduleEdit()">수정 모드</button>
           
           <button type="button" onclick="exportWardScheduleExcel()">엑셀다운로드</button>
@@ -3257,6 +3382,48 @@ function renderWardSchedule(){
 
     </div>`;
 }
+function renderWardScheduleArchive(){
+  const ward=getCurrentWard();
+  const el=document.getElementById('tab-ward-archive');
+  if(!ward || !el) return;
+  normalizeWardStructure(ward);
+  const months=Object.keys(ward.schedulesByMonth||{}).sort().reverse();
+  const currentKey=monthKey(uiYear,uiMonth);
+  const rows=months.map(k=>{
+    const schedule=ward.schedulesByMonth[k]||{};
+    const dayCount=Object.keys(schedule).length;
+    const parts=k.split('-');
+    const y=Number(parts[0]), m=Number(parts[1]);
+    const stats=summarizeSchedule(schedule,ward.nurses||[],y,m);
+    const totalN=Object.values(stats).reduce((sum,x)=>sum+Number(x.nights||0),0);
+    return `<div class="item" style="margin-bottom:10px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div>
+          <strong>${escapeHtml(k)} 근무표</strong> ${k===currentKey?'<span class="badge">현재 선택 월</span>':''}
+          <div class="small muted" style="margin-top:6px">저장일수 ${dayCount}일 · 총 N ${totalN}개 · 간호사 ${(ward.nurses||[]).length}명</div>
+        </div>
+        <div class="row">
+          <button type="button" onclick="openArchivedScheduleMonth('${k}')">보기</button>
+          <button type="button" onclick="exportArchivedScheduleExcel('${k}')">엑셀다운로드</button>
+          <button type="button" class="danger" onclick="deleteArchivedScheduleMonth('${k}')">삭제</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML=`
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h3>${escapeHtml(ward.name)} 근무표 보관함</h3>
+          <div class="sub">저장 버튼을 누른 월별 근무표가 이곳에 누적 보관됩니다. 1년 이상 월별 조회와 엑셀 다운로드가 가능합니다.</div>
+        </div>
+        <div class="badge">보관 월 ${months.length}개</div>
+      </div>
+      <div style="height:12px"></div>
+      ${rows || '<div class="muted">아직 저장된 월별 근무표가 없습니다. 근무표 탭에서 자동생성 후 저장을 누르면 이곳에 보관됩니다.</div>'}
+    </div>`;
+}
+
 function renderWardCalendar(){
   const ward=getCurrentWard(), el=document.getElementById('tab-ward-calendar');
   const ownEvents=ward.calendarEvents||[];
