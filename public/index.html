@@ -268,6 +268,7 @@ let data=loadData();
 ensureShiftCodeWorkTypeConsistency();
 let lastSavedSnapshot = JSON.stringify(data);
 let firebaseLoaded = false;
+let firebaseWatchStarted = false;
 let firebaseLoadPromise = Promise.resolve(false);
 let firebaseSaveTimer = null;
 ensureKoreanFixedHolidays(new Date().getFullYear());
@@ -413,23 +414,37 @@ async function loadFirebaseDataOnStart(){
   }
 }
 
-function ensureFirebaseReady(){
-  if(firebaseLoaded) return Promise.resolve(true);
-  if(window.nurseFirebaseReady) return window.nurseFirebaseReady;
-  if(window.nurseDb) return loadFirebaseDataOnStart();
-  return new Promise(resolve=>{
-    let tries=0;
-    const timer=setInterval(()=>{
-      tries++;
-      if(window.nurseDb){
-        clearInterval(timer);
-        loadFirebaseDataOnStart().then(resolve);
-      } else if(tries>50){
-        clearInterval(timer);
-        resolve(false);
-      }
-    },100);
-  });
+function setLoginStatusMessage(msg){
+  const err=document.getElementById('loginError');
+  if(err && msg){
+    err.textContent=msg;
+    err.classList.remove('hidden');
+  }
+}
+
+function sleep(ms){ return new Promise(resolve=>setTimeout(resolve, ms)); }
+
+async function ensureFirebaseReady(){
+  // v10.5: 병동 공동 시운영을 위해 localStorage 우회 로그인은 하지 않고, Firebase 연결만 사용합니다.
+  // 단, v10.4처럼 짧은 timeout으로 실패 처리하지 않고 SDK/DB 응답을 안정적으로 기다립니다.
+  if(firebaseLoaded && window.nurseDb && window.NURSE_DB_PATH) return true;
+
+  const maxWaitMs = 60000;
+  const started = Date.now();
+  while(!(window.nurseDb && window.NURSE_DB_PATH)){
+    if(Date.now() - started > maxWaitMs){
+      console.warn('Firebase SDK 또는 DB 객체가 60초 안에 준비되지 않았습니다.');
+      return false;
+    }
+    await sleep(200);
+  }
+
+  const ok = await loadFirebaseDataOnStart();
+  if(ok && !firebaseWatchStarted){
+    firebaseWatchStarted = true;
+    watchFirebaseData();
+  }
+  return !!ok;
 }
 
 function watchFirebaseData(){
@@ -1432,7 +1447,16 @@ async function login(){
   if(err) err.classList.add('hidden');
 
   try{
-    await ensureFirebaseReady();
+    setLoginStatusMessage('Firebase 데이터 연결 중입니다. 병동 공동 시운영을 위해 Firebase 연결 완료 후 로그인합니다.');
+    const firebaseOk = await ensureFirebaseReady();
+    if(!firebaseOk){
+      if(err){
+        err.textContent='Firebase 연결이 완료되지 않아 로그인할 수 없습니다. 인터넷 연결, GitHub 배포 주소, Firebase Realtime Database Rules를 확인하세요.';
+        err.classList.remove('hidden');
+      }
+      return;
+    }
+    if(err) err.classList.add('hidden');
     ensureDataDefaults();
     ensureShiftCodeWorkTypeConsistency();
 
@@ -3587,12 +3611,7 @@ window.nurseDb = {
 };
 window.NURSE_DB_PATH = 'nurseScheduler';
 
-window.nurseFirebaseReady = (typeof window.loadFirebaseDataOnStart === 'function')
-  ? window.loadFirebaseDataOnStart().then(function(){
-      if (typeof window.watchFirebaseData === 'function') window.watchFirebaseData();
-      return true;
-    }).catch(function(e){ console.warn('Firebase 초기 로드 실패:', e); return false; })
-  : Promise.resolve(false);
+window.nurseFirebaseReady = Promise.resolve(true);
 
 const versionInfo = document.getElementById("version-info");
 
