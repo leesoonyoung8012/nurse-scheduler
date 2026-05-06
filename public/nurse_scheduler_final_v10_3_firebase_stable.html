@@ -378,13 +378,36 @@ function ensureCoreGenerationRules(){
   data.generationRules.forEach((r,idx)=>{ r.priority=idx+1; if(r.key) data.commonScheduleSettings[r.key]=r.enabled!==false; });
 }
 
+
+function withTimeout(promise, ms, label){
+  return new Promise((resolve, reject)=>{
+    const timer=setTimeout(()=>reject(new Error((label||'작업')+' 시간이 초과되었습니다.')), ms);
+    Promise.resolve(promise).then(v=>{ clearTimeout(timer); resolve(v); }).catch(e=>{ clearTimeout(timer); reject(e); });
+  });
+}
+function setLoginErrorMessage(msg){
+  const err=document.getElementById('loginError');
+  if(err){
+    err.textContent=msg;
+    err.classList.remove('hidden');
+  } else {
+    alert(msg);
+  }
+}
+function setFirebaseStatus(msg){
+  const el=document.getElementById('version-info');
+  if(el && msg){
+    el.innerText = (el.innerText ? el.innerText + ' / ' : '') + msg;
+  }
+}
+
 async function loadFirebaseDataOnStart(){
   if(!window.nurseDb){
     firebaseLoaded = false;
     return false;
   }
   try{
-    const snap = await window.nurseDb.ref(window.NURSE_DB_PATH).get();
+    const snap = await withTimeout(window.nurseDb.ref(window.NURSE_DB_PATH).get(), 10000, 'Firebase 데이터 불러오기');
     if(snap.exists()){
       const remote = snap.val();
       if(remote && typeof remote === 'object'){
@@ -400,7 +423,7 @@ async function loadFirebaseDataOnStart(){
       ensureDataDefaults();
       ensureShiftCodeWorkTypeConsistency();
       ensureKoreanFixedHolidays(new Date().getFullYear());
-      await window.nurseDb.ref(window.NURSE_DB_PATH).set(data);
+      await withTimeout(window.nurseDb.ref(window.NURSE_DB_PATH).set(data), 10000, 'Firebase 초기 데이터 저장');
       lastSavedSnapshot = JSON.stringify(data);
       localStorage.setItem(STORAGE_KEY, lastSavedSnapshot);
     }
@@ -414,21 +437,32 @@ async function loadFirebaseDataOnStart(){
 }
 
 function ensureFirebaseReady(){
-  if(firebaseLoaded) return Promise.resolve(true);
-  if(window.nurseFirebaseReady) return window.nurseFirebaseReady;
-  if(window.nurseDb) return loadFirebaseDataOnStart();
-  return new Promise(resolve=>{
+  if(firebaseLoaded && window.nurseDb && window.NURSE_DB_PATH) return Promise.resolve(true);
+  const waitForFirebase = new Promise(resolve=>{
     let tries=0;
     const timer=setInterval(()=>{
       tries++;
-      if(window.nurseDb){
+      if(window.nurseDb && window.NURSE_DB_PATH){
         clearInterval(timer);
-        loadFirebaseDataOnStart().then(resolve);
-      } else if(tries>50){
+        resolve(true);
+      } else if(tries>=100){
         clearInterval(timer);
         resolve(false);
       }
     },100);
+  });
+
+  return withTimeout(
+    (async()=>{
+      const moduleReady = window.nurseFirebaseReady ? await window.nurseFirebaseReady : await waitForFirebase;
+      if(!moduleReady && !(window.nurseDb && window.NURSE_DB_PATH)) return false;
+      return await loadFirebaseDataOnStart();
+    })(),
+    12000,
+    'Firebase 연결'
+  ).catch(e=>{
+    console.warn('Firebase 준비 실패:', e);
+    return false;
   });
 }
 
@@ -795,7 +829,7 @@ function saveData(silent=false){
   const writeRemote = () => {
     if(window.nurseDb && window.NURSE_DB_PATH){
       try{
-        return window.nurseDb.ref(window.NURSE_DB_PATH).set(data).catch(function(e){
+        return withTimeout(window.nurseDb.ref(window.NURSE_DB_PATH).set(data), 10000, 'Firebase 저장').catch(function(e){
           console.warn('Firebase 저장 실패:', e);
           if(!silent) popup('Firebase 저장 실패: 네트워크 또는 DB 권한을 확인하세요.');
         });
@@ -1432,7 +1466,11 @@ async function login(){
   if(err) err.classList.add('hidden');
 
   try{
-    await ensureFirebaseReady();
+    const firebaseOk = await ensureFirebaseReady();
+    if(!firebaseOk){
+      setLoginErrorMessage('Firebase 연결이 완료되지 않아 로그인할 수 없습니다. 병동 공동 시운영을 위해 로컬 저장 로그인은 차단했습니다. 인터넷 연결, Firebase Database Rules, GitHub 배포 주소를 확인하세요.');
+      return;
+    }
     ensureDataDefaults();
     ensureShiftCodeWorkTypeConsistency();
 
@@ -3591,7 +3629,15 @@ window.nurseFirebaseReady = (typeof window.loadFirebaseDataOnStart === 'function
   ? window.loadFirebaseDataOnStart().then(function(){
       if (typeof window.watchFirebaseData === 'function') window.watchFirebaseData();
       return true;
-    }).catch(function(e){ console.warn('Firebase 초기 로드 실패:', e); return false; })
+    }).catch(function(e){
+      console.warn('Firebase 초기 로드 실패:', e);
+      const err=document.getElementById('loginError');
+      if(err){
+        err.textContent='Firebase 초기 연결 실패: 네트워크, Database Rules, 배포 도메인 설정을 확인하세요.';
+        err.classList.remove('hidden');
+      }
+      return false;
+    })
   : Promise.resolve(false);
 
 const versionInfo = document.getElementById("version-info");
@@ -3612,7 +3658,7 @@ if(!count){
 localStorage.setItem("updateCount", count);
 
 if(versionInfo){
-  versionInfo.innerText = `최종 수정일: ${formattedDate} / 수정횟수: ${count}회`;
+  versionInfo.innerText = `최종 수정일: ${formattedDate} / 수정횟수: ${count}회 / Firebase 필수 연결 모드`;
 }
 
 </script></body>
