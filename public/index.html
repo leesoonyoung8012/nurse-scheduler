@@ -259,7 +259,7 @@ function addNurse(){
   rows.push({
     id,
     name:'',
-    team:'A',
+    team:(getWardTeamOptions(ward)[0] || 'A'),
     workTypeIds:[],
     placementRuleIds:[],
     maxNightPerMonth:data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6,
@@ -366,6 +366,7 @@ function ensureDataDefaults(){
     }
   });
   (data.wards||[]).forEach(w=>{
+    if(!Array.isArray(w.teamOptions) || w.teamOptions.length===0) w.teamOptions = defaultTeamOptions();
     if(!w.calendarEvents) w.calendarEvents=[];
     if(!w.additionalOffByMonth) w.additionalOffByMonth={};
     if(!w.requests) w.requests=[];
@@ -674,14 +675,14 @@ function defaultData(){
       {id:'u2',loginId:'ward52',password:'1234',role:'ward',wardId:'ward-2',name:'52병동 수간호사'}
     ],
     wards:[
-      {id:'ward-1',name:'51병동',shiftsRequired:{D:3,E:2,N:2},nurses:[
+      {id:'ward-1',name:'51병동',teamOptions:['A','B','C','D','E','F','G','H','I','J'],shiftsRequired:{D:3,E:2,N:2},nurses:[
         {id:'n1',name:'김간호',team:'A',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-three'],selectedPlacementRules:[],maxNightPerMonth:6,maxConsecutiveDays:5,minConsecutiveNight:0,maxConsecutiveNight:3,notes:''},
         {id:'n2',name:'박야간',team:'B',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-nightkeep'],selectedPlacementRules:[],maxNightPerMonth:12,maxConsecutiveDays:4,minConsecutiveNight:2,maxConsecutiveNight:3,notes:'나이트 전담'},
         {id:'n3',name:'이단축',team:'C',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-pregnant','wt-short6'],selectedPlacementRules:['pl-sat-restrict','pl-holiday-restrict'],maxNightPerMonth:0,maxConsecutiveDays:4,minConsecutiveNight:0,maxConsecutiveNight:0,notes:'임신근로자 / 6시간 단축'}
       ],requests:[
         {id:'r1',nurseId:'n1',date:'2026-05-10',type:'WO',priority:'preferred',note:'가족행사'}
       ],schedule:{},schedulesByMonth:{},additionalOffByMonth:{},calendarEvents:[]},
-      {id:'ward-2',name:'52병동',shiftsRequired:{D:2,E:2,N:1},nurses:[
+      {id:'ward-2',name:'52병동',teamOptions:['A','B','C','D','E','F','G','H','I','J'],shiftsRequired:{D:2,E:2,N:1},nurses:[
         {id:'n4',name:'최주간',team:'A',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-three'],selectedPlacementRules:[],maxNightPerMonth:5,maxConsecutiveDays:5,minConsecutiveNight:0,maxConsecutiveNight:3,notes:''},
         {id:'n5',name:'정야간',team:'B',role:'RN',employmentStatus:'active',selectedWorkTypes:['wt-nightkeep'],selectedPlacementRules:[],maxNightPerMonth:14,maxConsecutiveDays:4,minConsecutiveNight:2,maxConsecutiveNight:3,notes:'52병동 나이트 전담'}
       ],requests:[],schedule:{},schedulesByMonth:{},additionalOffByMonth:{},calendarEvents:[]}
@@ -964,6 +965,7 @@ function normalizeWardStructure(ward){
   }
   if(!ward.additionalOffByMonth || typeof ward.additionalOffByMonth !== 'object') ward.additionalOffByMonth = {};
   if(!Array.isArray(ward.calendarEvents)) ward.calendarEvents = [];
+  if(!Array.isArray(ward.teamOptions) || ward.teamOptions.length===0) ward.teamOptions = defaultTeamOptions();
 
   normalizeStaffingRulesStructure(ward);
 
@@ -2397,6 +2399,7 @@ function createWardAndUser(){
     leaveRequests: [],
     schedule: {},
     schedulesByMonth: {},
+    teamOptions: defaultTeamOptions(),
     staffingRules: { weekday:{D:{min:0,max:0},E:{min:0,max:0},N:{min:0,max:0}}, saturday:{D:{min:0,max:0},E:{min:0,max:0},N:{min:0,max:0}}, holiday:{D:{min:0,max:0},E:{min:0,max:0},N:{min:0,max:0}} }
   };
   const newUser = {
@@ -2835,18 +2838,8 @@ function renderAdminGenerate(){
 
   el.innerHTML=`
     <div class="card">
-      <h3>공통 스케줄 생성 설정</h3>
-      <div class="grid2" style="margin-top:12px">
-        <div class="field"><div class="label">기본 최대 N 횟수</div><input type="number" value="${data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6}" onchange="updateCommonScheduleSetting('defaultMaxNightPerMonth',Number(this.value))"></div>
-        <div class="field"><div class="label">기본 연속근무 허용일</div><input type="number" value="${data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5}" onchange="updateCommonScheduleSetting('defaultMaxConsecutiveDays',Number(this.value))"></div>
-        <div class="field"><div class="label">기본 연속 N 최소</div><input type="number" value="${data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0}" onchange="updateCommonScheduleSetting('defaultMinConsecutiveNight',Number(this.value))"></div>
-        <div class="field"><div class="label">기본 연속 N 최대</div><input type="number" value="${data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3}" onchange="updateCommonScheduleSetting('defaultMaxConsecutiveNight',Number(this.value))"></div>
-      </div>
-    </div>
-
-    <div class="card">
       <h3>공통 생성 원칙</h3>
-      <div class="sub">병동마다 다른 것이 아닌 자동 생성 기준을 중앙에서 관리합니다. 위에 있는 항목일수록 우선순위가 높습니다. 드래그로 순서를 변경할 수 있습니다.</div>
+      <div class="sub">전체 병동에 공통 적용되는 생성 원칙만 관리합니다. 인원수·나이트·연속근무 기본값은 각 병동 수간호사 화면에서 설정합니다. 위에 있는 항목일수록 우선순위가 높습니다. 드래그로 순서를 변경할 수 있습니다.</div>
       <div class="row" style="margin-top:12px">
         <input id="newGenerationRuleName" placeholder="새 공통 생성 원칙 이름 입력">
         <button type="button" class="primary" onclick="addGenerationRule()">원칙 추가</button>
@@ -2936,6 +2929,49 @@ function resolveChangeRequest(id,status){ const r=data.changeRequests.find(x=>x.
 function deleteChangeRequest(id){ if(!confirm('요청을 삭제할까요?')) return; data.changeRequests=data.changeRequests.filter(r=>r.id!==id); saveData(); renderApp(); }
 
 
+
+
+function defaultTeamOptions(){
+  return ['A','B','C','D','E','F','G','H','I','J'];
+}
+function normalizeTeamOptionsInput(raw){
+  const parts=String(raw||'').split(/[\s,\/]+/).map(x=>x.trim().toUpperCase()).filter(Boolean);
+  const seen=[];
+  parts.forEach(x=>{ if(!seen.includes(x)) seen.push(x); });
+  return seen.length ? seen : defaultTeamOptions();
+}
+function getWardTeamOptions(ward){
+  if(!ward) return defaultTeamOptions();
+  if(!Array.isArray(ward.teamOptions) || ward.teamOptions.length===0) ward.teamOptions=defaultTeamOptions();
+  const opts=ward.teamOptions.map(x=>String(x||'').trim().toUpperCase()).filter(Boolean);
+  (ward.nurses||[]).forEach(n=>{
+    const t=String(n.team||'').trim().toUpperCase();
+    if(t && !opts.includes(t)) opts.push(t);
+  });
+  if(!opts.length) opts.push(...defaultTeamOptions());
+  ward.teamOptions=opts;
+  return opts;
+}
+function updateWardTeamOptions(raw){
+  const ward=getCurrentWard();
+  if(!ward) return;
+  ward.teamOptions=normalizeTeamOptionsInput(raw);
+  const valid=getWardTeamOptions(ward);
+  (ward.nurses||[]).forEach(n=>{
+    if(!valid.includes(String(n.team||'').toUpperCase())) n.team=valid[0] || 'A';
+  });
+  if(nurseDraftState[ward.id]){
+    nurseDraftState[ward.id].forEach(n=>{
+      if(!valid.includes(String(n.team||'').toUpperCase())) n.team=valid[0] || 'A';
+    });
+  }
+  saveData(true);
+  renderWardNurses();
+  popup('팀 목록이 저장되었습니다.');
+}
+function setDefaultWardTeamOptions(){
+  updateWardTeamOptions(defaultTeamOptions().join(','));
+}
 
 function updateWardStaffingRule(period,shift,key,val){
   const ward=getCurrentWard();
@@ -3051,6 +3087,20 @@ function renderWardNurses(){
           <button class="primary" type="button" onclick="saveWardNurseTable()">저장</button>
         </div>
       </div>
+      <div class="item" style="margin-top:14px">
+        <div class="row" style="justify-content:space-between;align-items:end">
+          <div style="flex:1 1 420px">
+            <h4>팀 목록 설정</h4>
+            <div class="small muted" style="margin-top:4px">병동별 팀 구성을 직접 수정합니다. 예: A,B,C 또는 A,B,C,D,E,F,G,H,I,J</div>
+            <div style="height:8px"></div>
+            <input id="wardTeamOptionsInput" value="${escapeHtml(getWardTeamOptions(ward).join(','))}" placeholder="예: A,B,C,D,E,F,G,H,I,J">
+          </div>
+          <div class="quick-actions">
+            <button type="button" onclick="setDefaultWardTeamOptions()">A~J 기본값</button>
+            <button class="primary" type="button" onclick="updateWardTeamOptions(document.getElementById('wardTeamOptionsInput').value)">팀 목록 저장</button>
+          </div>
+        </div>
+      </div>
       <div class="staffing-panel">
         <div class="staffing-panel-head">
           <div>
@@ -3080,7 +3130,7 @@ function renderWardNurses(){
           <tbody>
             ${rows.map(n=>`
               <tr>
-                <td><select onchange="updateNurseDraft('${n.id}','team',this.value)" class="small-input"><option ${n.team==='A'?'selected':''}>A</option><option ${n.team==='B'?'selected':''}>B</option><option ${n.team==='C'?'selected':''}>C</option></select></td>
+                <td><select onchange="updateNurseDraft('${n.id}','team',this.value)" class="small-input">${getWardTeamOptions(ward).map(t=>`<option value="${escapeHtml(t)}" ${String(n.team||'').toUpperCase()===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}</select></td>
                 <td><input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" onchange="updateNurseDraft('${n.id}','name',this.value)"></td>
                 <td><div class="inline-checks">${(data.workTypes||[]).map(w=>`<label class="check-item"><input type="checkbox" ${(n.workTypeIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','workTypeIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)}${w.code?` <span class="badge">${escapeHtml(w.code)}</span>`:''}</span></label>`).join('') || '<span class="muted">근무유형 없음</span>'}</div></td>
                 <td><div class="inline-checks">${(getSortedPlacementRules()).map(w=>`<label class="check-item"><input type="checkbox" ${(n.placementRuleIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','placementRuleIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)} <span class="badge">${w.priority||''}</span></span></label>`).join('') || '<span class="muted">배치기준 없음</span>'}</div></td>
