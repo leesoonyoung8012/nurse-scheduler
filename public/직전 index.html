@@ -188,6 +188,22 @@ select{
   .generation-rule-row{grid-template-columns:1fr}
   .generation-rule-actions{justify-content:flex-end}
 }
+
+
+/* v11 UI refinement: staffing cards, compact inputs, night limit pairs, leave basket calendar */
+.staffing-panel{border:1px solid var(--line);border-radius:18px;background:#fff;padding:16px;margin-top:12px}
+.staffing-panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.staffing-period-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.staffing-card{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}
+.staffing-card.weekday{border-color:#60a5fa}.staffing-card.saturday{border-color:#34d399}.staffing-card.holiday{border-color:#fb923c}
+.staffing-card-title{padding:12px 16px;font-size:17px;font-weight:800;border-bottom:1px solid var(--line)}
+.staffing-card.weekday .staffing-card-title{color:#2563eb;background:#eff6ff}.staffing-card.saturday .staffing-card-title{color:#059669;background:#ecfdf5}.staffing-card.holiday .staffing-card-title{color:#ea580c;background:#fff7ed}
+.staffing-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid #eef2f7}
+.staffing-row:last-child{border-bottom:none}.staffing-shift{font-weight:700}.mini-field{display:flex;align-items:center;gap:6px;color:#475569;font-size:13px}.mini-field input{width:54px;min-width:54px;padding:7px 8px;text-align:center;border-radius:8px}
+.nurse-limit-pair{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.nurse-limit-pair .mini-field input{width:58px;min-width:58px}
+.modern-split{display:grid;grid-template-columns:minmax(420px,1fr) minmax(420px,1.2fr);gap:16px}.modern-table{min-width:980px}.modern-table th,.modern-table td{vertical-align:middle}.leave-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}.leave-dow,.leave-day{border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-height:44px;padding:8px;text-align:center}.leave-dow{min-height:auto;background:#f8fafc;font-weight:800}.leave-day{cursor:pointer;position:relative}.leave-day:hover{background:#eff6ff}.leave-day.muted{color:#94a3b8;background:#f8fafc}.leave-day.selected{background:#dbeafe;color:#1d4ed8;font-weight:800}.leave-day.selected::after{content:'✓';display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:999px;background:#2563eb;color:#fff;font-size:12px;margin-left:4px}.basket-list{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}.basket-item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);font-size:13px}.basket-item:last-child{border-bottom:none}.basket-empty{padding:16px;color:var(--muted);font-size:13px;text-align:center}.quick-actions{display:flex;gap:8px;flex-wrap:wrap}.compact-action{padding:8px 11px;border-radius:10px}.sticky-save-row{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+@media (max-width:1100px){.staffing-period-grid,.modern-split{grid-template-columns:1fr}.staffing-row{grid-template-columns:1fr auto auto}}
+
 </style>
 </head>
 <body>
@@ -265,6 +281,7 @@ let currentUser=null, activeTab='', uiYear=new Date().getFullYear(), uiMonth=new
 let nurseDraftState={};
 let nurseAutoSaveTimer=null;
 let scheduleDraftState={};
+let leaveBasketState=[];
 let preselectNewWorkTypeShiftCodeId='';
 let data=loadData();
 ensureShiftCodeWorkTypeConsistency();
@@ -373,9 +390,9 @@ function ensureCoreGenerationRules(){
   if(!Array.isArray(data.generationRules)) data.generationRules=[];
   const existing=data.generationRules.find(r=>r.key==='enforcePreviousMonthTransition' || String(r.name||'').includes('전달 마지막 근무'));
   if(!existing){
-    data.generationRules.unshift({id:'gr-prev-transition', name:'전월 마지막 OFF 이후 근무흐름 연속성 최우선 적용 (연속근무/연속N 이어서 계산, N→D/E 금지)', key:'enforcePreviousMonthTransition', enabled:true, priority:1});
+    data.generationRules.unshift({id:'gr-prev-transition', name:'전달 마지막 근무 연속성 최우선 적용 (E→D 금지, N→D/E 금지)', key:'enforcePreviousMonthTransition', enabled:true, priority:1});
   } else {
-    existing.name='전월 마지막 OFF 이후 근무흐름 연속성 최우선 적용 (연속근무/연속N 이어서 계산, N→D/E 금지)';
+    existing.name='전달 마지막 근무 연속성 최우선 적용 (E→D 금지, N→D/E 금지)';
     existing.key='enforcePreviousMonthTransition';
     existing.enabled = existing.enabled !== false;
     existing.priority = 1;
@@ -621,7 +638,7 @@ function defaultData(){
     ],
     commonScheduleSettings:{ defaultMaxNightPerMonth:6, defaultMaxConsecutiveDays:5, defaultMinConsecutiveNight:0, defaultMaxConsecutiveNight:3, balanceDEN:true, balanceTeams:true, rotateNight:true, reduceNightForMarked:true, wantedOffFirst:true, enforceMinStaffing:true, fillRemainingWithWork:true, allowWantedOffOverTarget:true, enforcePreviousMonthTransition:true },
     generationRules:[
-      {id:'gr-prev-transition', name:'전월 마지막 OFF 이후 근무흐름 연속성 최우선 적용 (연속근무/연속N 이어서 계산, N→D/E 금지)', key:'enforcePreviousMonthTransition', enabled:true, priority:1},
+      {id:'gr-prev-transition', name:'전달 마지막 근무 연속성 최우선 적용 (E→D 금지, N→D/E 금지)', key:'enforcePreviousMonthTransition', enabled:true, priority:1},
       {id:'gr-1', name:'원티드 off 무조건 반영', key:'wantedOffFirst', enabled:true, priority:2},
       {id:'gr-2', name:'근무 shift 최소인원 충족 우선', key:'enforceMinStaffing', enabled:true, priority:3},
       {id:'gr-3', name:'D/E/N 균등 배분', key:'balanceDEN', enabled:true, priority:4},
@@ -855,33 +872,26 @@ function setWardScheduleForMonth(ward,y,m,schedule){
   ward.schedule=cloneJson(schedule||{}); // 기존 화면/백업 호환용: 마지막으로 저장한 근무표도 유지
 }
 function getPreviousMonthLastCode(ward,nurseId,y,m){
+  return getPreviousMonthCodeFromEnd(ward,nurseId,y,m,0);
+}
+function getPreviousMonthCodeFromEnd(ward,nurseId,y,m,offsetFromEnd){
   const prev=getPrevMonthYearMonth(y,m);
   const prevSchedule=getWardScheduleForMonth(ward,prev.y,prev.m);
   const lastDay=daysInMonth(prev.y,prev.m);
-  return String(prevSchedule[makeDateKey(prev.y,prev.m,lastDay)]?.[nurseId]||'').toUpperCase();
+  const day=lastDay-Number(offsetFromEnd||0);
+  if(day<1) return '';
+  return String(prevSchedule[makeDateKey(prev.y,prev.m,day)]?.[nurseId]||'').toUpperCase();
 }
-
-function getPreviousMonthTailCodesSinceLastOff(ward,nurseId,y,m){
+function getPreviousMonthTailCodes(ward,nurseId,y,m,tailDays=7){
   const prev=getPrevMonthYearMonth(y,m);
   const prevSchedule=getWardScheduleForMonth(ward,prev.y,prev.m);
   const lastDay=daysInMonth(prev.y,prev.m);
-  const offCodes=['O','OF','AL','SL','WO'];
-  const tail=[];
-  for(let d=lastDay; d>=1; d--){
-    const code=String(prevSchedule[makeDateKey(prev.y,prev.m,d)]?.[nurseId]||'').toUpperCase();
-    // 전월 말일부터 거꾸로 보며 마지막 OFF/휴가/공백을 만나면 그 앞은 끊긴 것으로 봅니다.
-    if(!code || offCodes.includes(code)) break;
-    tail.unshift(code);
+  const start=Math.max(1,lastDay-Number(tailDays||7)+1);
+  const codes=[];
+  for(let d=start; d<=lastDay; d++){
+    codes.push({day:d, code:String(prevSchedule[makeDateKey(prev.y,prev.m,d)]?.[nurseId]||'').toUpperCase()});
   }
-  return tail;
-}
-function countTrailingFromArray(arr, predicate){
-  let count=0;
-  for(let i=arr.length-1; i>=0; i--){
-    if(predicate(arr[i])) count++;
-    else break;
-  }
-  return count;
+  return codes;
 }
 function violatesPrevToCurrentTransition(prevCode,nextCode){
   const prev=String(prevCode||'').toUpperCase();
@@ -1127,41 +1137,52 @@ function generateSchedule(ward,y,m){
   }
   function dailyCount(date, shift){ return nurses.filter(n=>schedule[date]?.[n.id]===shift).length; }
   function experiencedCount(date, shift){ return nurses.filter(n=>schedule[date]?.[n.id]===shift && !getNurseConstraints(n).isNew).length; }
+  const prevYmForGeneration=getPrevMonthYearMonth(y,m);
+  const prevScheduleForGeneration=getWardScheduleForMonth(ward,prevYmForGeneration.y,prevYmForGeneration.m);
+  const prevLastDayForGeneration=daysInMonth(prevYmForGeneration.y,prevYmForGeneration.m);
   function codeAt(day,nid){ return schedule[makeDateKey(y,m,day)]?.[nid]||''; }
-  function prevCodeAt(day,nid){ return day>1 ? String(codeAt(day-1,nid)||'').toUpperCase() : getPreviousMonthLastCode(ward,nid,y,m); }
+  function codeAtWithPrevious(day,nid){
+    if(day>=1) return String(codeAt(day,nid)||'').toUpperCase();
+    const prevDay=prevLastDayForGeneration+day;
+    if(prevDay<1) return '';
+    return String(prevScheduleForGeneration[makeDateKey(prevYmForGeneration.y,prevYmForGeneration.m,prevDay)]?.[nid]||'').toUpperCase();
+  }
+  function prevCodeAt(day,nid){ return String(codeAtWithPrevious(day-1,nid)||'').toUpperCase(); }
   function isOff(code){ return !code || offCodes.includes(code); }
   function statNow(){ return summarizeSchedule(schedule,nurses,y,m); }
 
-  function previousTailCodes(n){ return getPreviousMonthTailCodesSinceLastOff(ward,n.id,y,m); }
-  function previousWorkStreakBeforeMonth(n){ return countTrailingFromArray(previousTailCodes(n), c=>workCodes.includes(String(c||'').toUpperCase())); }
-  function previousNightStreakBeforeMonth(n){ return countTrailingFromArray(previousTailCodes(n), c=>String(c||'').toUpperCase()==='N'); }
-  function consecutiveWorkBefore(n, day){
-    let count=0;
-    for(let d=day-1; d>=1; d--){
-      const c=String(codeAt(d,n.id)||'').toUpperCase();
-      if(workCodes.includes(c)) count++; else return count;
-    }
-    return count + previousWorkStreakBeforeMonth(n);
-  }
   function consecutiveIf(n, day, shift){
-    if(!workCodes.includes(String(shift||'').toUpperCase())) return 0;
-    let count=consecutiveWorkBefore(n, day)+1;
-    for(let d=day+1; d<=last; d++){ const c=String(codeAt(d,n.id)||'').toUpperCase(); if(workCodes.includes(c)) count++; else break; }
+    let count=1;
+    for(let d=day-1; d>=day-14; d--){ const c=codeAtWithPrevious(d,n.id); if(workCodes.includes(c)) count++; else break; }
+    for(let d=day+1; d<=last; d++){ const c=codeAtWithPrevious(d,n.id); if(workCodes.includes(c)) count++; else break; }
     return count;
   }
   function previousNightStreak(n, day){
     let count=0;
-    for(let d=day-1; d>=1; d--){
-      const c=String(codeAt(d,n.id)||'').toUpperCase();
-      if(c==='N') count++; else return count;
-    }
-    return count + previousNightStreakBeforeMonth(n);
+    for(let d=day-1; d>=day-14; d--){ const c=String(codeAtWithPrevious(d,n.id)||'').toUpperCase(); if(c==='N') count++; else break; }
+    return count;
   }
   function nightStreakIf(n, day, shift){
-    if(String(shift||'').toUpperCase()!=='N') return 0;
-    let count=previousNightStreak(n, day)+1;
-    for(let d=day+1; d<=last; d++){ const c=String(codeAt(d,n.id)||'').toUpperCase(); if(c==='N') count++; else break; }
+    if(shift!=='N') return 0;
+    let count=1;
+    for(let d=day-1; d>=day-14; d--){ const c=String(codeAtWithPrevious(d,n.id)||'').toUpperCase(); if(c==='N') count++; else break; }
+    for(let d=day+1; d<=last; d++){ const c=String(codeAtWithPrevious(d,n.id)||'').toUpperCase(); if(c==='N') count++; else break; }
     return count;
+  }
+  function mustContinuePreviousNight(n, day){
+    const minNightStreak=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
+    if(minNightStreak<=0) return false;
+    const prevN=previousNightStreak(n,day);
+    return prevN>0 && prevN<minNightStreak;
+  }
+  function protectedNightContinuity(n, day){
+    const minNightStreak=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
+    if(minNightStreak<=0) return false;
+    if(String(codeAtWithPrevious(day,n.id)||'').toUpperCase()!=='N') return false;
+    let before=0, after=0;
+    for(let d=day-1; d>=day-14; d--){ const c=String(codeAtWithPrevious(d,n.id)||'').toUpperCase(); if(c==='N') before++; else break; }
+    for(let d=day+1; d<=Math.min(last,day+14); d++){ const c=String(codeAtWithPrevious(d,n.id)||'').toUpperCase(); if(c==='N') after++; else break; }
+    return before>0 || after>0 || (before+1+after)<minNightStreak;
   }
   function canPlace(n, shift, day, phase='extra', allowReplace=false){
     const key=makeDateKey(y,m,day), dtype=getDateType(y,m,day);
@@ -1179,7 +1200,7 @@ function generateSchedule(ward,y,m){
     if(isRestricted(n,dtype)) return false;
 
     // D/E/N 최대 인원은 최소인원보다 낮게 설정된 경우를 제외하고 넘기지 않습니다.
-    if(phase!=='newSupport' && ['D','E','N'].includes(shift) && dailyCount(key,shift) >= maxForDay(day,shift) && existing!==shift) return false;
+    if(phase!=='newSupport' && phase!=='continuityNight' && ['D','E','N'].includes(shift) && dailyCount(key,shift) >= maxForDay(day,shift) && existing!==shift) return false;
 
     const c=getNurseConstraints(n);
     const stats=statNow();
@@ -1187,16 +1208,18 @@ function generateSchedule(ward,y,m){
     const maxC=getNurseNumberSetting(n,'maxConsecutiveDays',data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5);
     const minNightStreak=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
     const maxNightStreak=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
+    // 전월 말일부터 이어진 N이 최소 연속 N에 아직 도달하지 않았다면, 다음 달 초 배정은 N 연장이 최우선입니다.
+    if(mustContinuePreviousNight(n,day) && shift!=='N') return false;
     if(shift==='N' && (stats[n.id]?.nights||0) >= maxN && existing!=='N') return false;
     if(shift==='N' && maxNightStreak>0 && nightStreakIf(n,day,shift)>maxNightStreak) return false;
     if(shift!=='N' && minNightStreak>0 && previousNightStreak(n,day)>0 && previousNightStreak(n,day)<minNightStreak) return false;
     if(maxC>0 && consecutiveIf(n,day,shift)>maxC) return false;
     const prevCode = prevCodeAt(day,n.id);
     if(opt.enforcePreviousMonthTransition && violatesPrevToCurrentTransition(prevCode, shift)) return false;
-    if(shift==='D' && prevCode==='N') return false;
-    if(shift==='D' && prevCode==='E') return false;
-    if(shift==='E' && prevCode==='N') return false;
-    if(shift==='N' && day<last && codeAt(day+1,n.id)==='D') return false;
+    if(shift==='D' && prevCodeAt(day,n.id)==='N') return false;
+    if(shift==='D' && prevCodeAt(day,n.id)==='E') return false;
+    if(shift==='E' && prevCodeAt(day,n.id)==='N') return false;
+    if(shift==='N' && codeAt(day+1,n.id)==='D') return false;
 
     // 신규 원칙은 코드화된 공통 생성원칙으로 제어합니다.
     // enforceNewNotAlone: 신규가 해당 shift에 혼자 배치되는 것만 금지
@@ -1238,40 +1261,12 @@ function generateSchedule(ward,y,m){
     nurses.forEach(n=>{
       if(schedule[key][n.id]) return;
       if(isRestricted(n,dtype)) schedule[key][n.id]='OF';
+      else if(mustContinuePreviousNight(n,d) && canPlace(n,'N',d,'continuityNight')) schedule[key][n.id]='N';
       else {
         const aw=allowedWorkCodes(n);
         if(aw.length===1 && ['SD6','MD'].includes(aw[0])) schedule[key][n.id]=aw[0];
       }
     });
-  }
-
-  function enforceCarriedNightContinuity(){
-    // 전월 마지막 OFF 이후의 N 연속을 이번 달 초까지 이어서 봅니다.
-    // 총 N 개수는 이번 달만 계산하지만, 연속 N 최소/최대와 N 다음날 D/E 금지는 전월 흐름을 포함합니다.
-    for(let d=1; d<=last; d++){
-      const key=makeDateKey(y,m,d);
-      nurses.forEach(n=>{
-        if(schedule[key]?.[n.id]) return;
-        const carriedN=previousNightStreak(n,d);
-        if(carriedN<=0) return;
-        const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
-        const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-        // 이미 연속 N 최대치에 도달했다면 다음날은 반드시 OFF로 막습니다.
-        if(maxNs>0 && carriedN>=maxNs){
-          schedule[key][n.id]='OF';
-          return;
-        }
-        // 연속 N 최소치에 못 미쳤다면 N 연장을 최우선으로 시도합니다.
-        if(minNs>0 && carriedN<minNs){
-          if(canPlace(n,'N',d,'continuity',false)){
-            schedule[key][n.id]='N';
-          } else {
-            // N 연장이 불가능한 경우에도 D/E로 넘어가지 않도록 OFF 처리합니다.
-            schedule[key][n.id]='OF';
-          }
-        }
-      });
-    }
   }
 
   function fillMinimumStaffing(){
@@ -1294,6 +1289,11 @@ function generateSchedule(ward,y,m){
       const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
       nurses.forEach(n=>{
         if(schedule[key][n.id]) return;
+        // 전월 말 N 연속이 최소치에 못 미치면 OFF보다 N 연장을 먼저 적용합니다.
+        if(mustContinuePreviousNight(n,d) && canPlace(n,'N',d,'continuityNight')){
+          schedule[key][n.id]='N';
+          return;
+        }
         const currentOff=statNow()[n.id]?.totalOff||0;
         if(currentOff < targetOff){
           schedule[key][n.id]='OF';
@@ -1308,6 +1308,8 @@ function generateSchedule(ward,y,m){
     const key=makeDateKey(y,m,day);
     // 같은 shift를 다른 직원에게 넘기는 swap에서는 일별 인원수가 유지되므로
     // 최소인원 여부와 상관없이 현재 shift 보유자이면 교환 후보가 될 수 있습니다.
+    // 단, 전월 말부터 이어진 최소 연속 N을 완성하는 N은 교환/해제하지 않습니다.
+    if(shift==='N' && protectedNightContinuity(n,day)) return false;
     return schedule[key]?.[n.id]===shift;
   }
   function balanceShiftCounts(shift){
@@ -1417,6 +1419,11 @@ function generateSchedule(ward,y,m){
           const key=makeDateKey(y,m,d);
           const existing=schedule[key]?.[n.id]||'';
           if(!['','O','OF'].includes(existing)) continue;
+          if(mustContinuePreviousNight(n,d) && canPlace(n,'N',d,'continuityNight',true)){
+            schedule[key][n.id]='N';
+            changed=true;
+            break;
+          }
           const possible=allowedWorkCodes(n)
             .filter(shift=>['D','E','N','MD','SD6'].includes(shift))
             .filter(shift=>!['D','E','N'].includes(shift) || dailyCount(key,shift) < maxForDay(d,shift))
@@ -1445,6 +1452,7 @@ function generateSchedule(ward,y,m){
           const key=makeDateKey(y,m,d);
           const code=schedule[key]?.[n.id]||'';
           if(!['D','E','N'].includes(code)) continue;
+          if(code==='N' && protectedNightContinuity(n,d)) continue;
           if(dailyCount(key,code) <= minForDay(d,code)) continue;
           const hasNewSameShift=nurses.some(x=>getNurseConstraints(x).isNew && schedule[key]?.[x.id]===code);
           const expAfter=experiencedCount(key,code) - (!getNurseConstraints(n).isNew ? 1 : 0);
@@ -1457,9 +1465,6 @@ function generateSchedule(ward,y,m){
       if(!changed) return;
     }
   }
-
-  // 전월 마지막 OFF 이후 이어진 N 흐름은 다른 배정 원칙보다 먼저 확정합니다.
-  enforceCarriedNightContinuity();
 
   // 1) 공통 생성원칙은 우선순위대로 실행하되, 절대 제한은 항상 유지합니다.
   const ran={min:false, fill:false, balance:false};
@@ -1513,7 +1518,6 @@ function generateSchedule(ward,y,m){
   balanceOffBySwaps();
   addWorkForOverOffUpToMax();
   repairHardConstraints();
-  enforceCarriedNightContinuity();
   addWorkForOverOffUpToMax();
 
   function validateSchedule(){
@@ -1540,17 +1544,20 @@ function generateSchedule(ward,y,m){
     nurses.forEach(n=>{
       const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
       const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-      let streak=previousNightStreakBeforeMonth(n), start=streak>0 ? '전월말' : 0;
-      for(let d=1; d<=last+1; d++){
-        const c=d<=last ? String(codeAt(d,n.id)||'').toUpperCase() : '';
+      let streak=0, startDay=null, touchesCurrent=false;
+      for(let rel=-6; rel<=last+1; rel++){
+        const c=rel<=last ? String(codeAtWithPrevious(rel,n.id)||'').toUpperCase() : '';
         if(c==='N'){
-          if(streak===0) start=d;
+          if(streak===0){ startDay=rel; touchesCurrent=false; }
           streak++;
+          if(rel>=1) touchesCurrent=true;
         } else if(streak>0){
-          const label = start==='전월말' ? `${n.name} 전월 말부터 이어진 연속 N` : `${makeDateKey(y,m,start)} ${n.name} 연속 N`;
-          if(minNs>0 && streak<minNs) issues.push(`${label} 최소 미달 (${streak}/${minNs})`);
-          if(maxNs>0 && streak>maxNs) issues.push(`${label} 최대 초과 (${streak}/${maxNs})`);
-          streak=0; start=0;
+          if(touchesCurrent){
+            const label=startDay>=1 ? makeDateKey(y,m,startDay) : '전월 마지막 주';
+            if(minNs>0 && streak<minNs) issues.push(`${label} ${n.name} 연속 N 최소 미달 (${streak}/${minNs})`);
+            if(maxNs>0 && streak>maxNs) issues.push(`${label} ${n.name} 연속 N 최대 초과 (${streak}/${maxNs})`);
+          }
+          streak=0; startDay=null; touchesCurrent=false;
         }
       }
     });
@@ -3003,96 +3010,89 @@ function renderWardNurses(){
   normalizeStaffingRulesStructure(ward);
   ensureWardDraftState();
   const rows=getWardDraftRows();
-  const periodLabels={weekday:'평일',saturday:'토요일',holiday:'일요일/공휴일'};
-  function staffingInputs(period){
-    return ['D','E','N'].map(shift=>`
-      <div class="item">
-        <div class="small muted" style="margin-bottom:6px">${periodLabels[period]} ${shift} 인원 (왼쪽 최소 / 오른쪽 최대)</div>
-        <div class="row">
-          <input type="number" style="width:90px" value="${ward.staffingRules?.[period]?.[shift]?.min ?? 0}" onchange="updateWardStaffingRule('${period}','${shift}','min',this.value)" placeholder="최소">
-          <input type="number" style="width:90px" value="${ward.staffingRules?.[period]?.[shift]?.max ?? 0}" onchange="updateWardStaffingRule('${period}','${shift}','max',this.value)" placeholder="최대">
-        </div>
-      </div>`).join('');
+  const periodMeta={
+    weekday:{title:'평일 (월~금)', cls:'weekday'},
+    saturday:{title:'토요일', cls:'saturday'},
+    holiday:{title:'일요일 / 공휴일', cls:'holiday'}
+  };
+  const shiftName={D:'D (데이)',E:'E (이브닝)',N:'N (나이트)'};
+  function staffingCard(period){
+    const meta=periodMeta[period];
+    return `<div class="staffing-card ${meta.cls}">
+      <div class="staffing-card-title">${meta.title}</div>
+      <div class="staffing-row" style="font-size:12px;color:#64748b;font-weight:700"><div>근무</div><div>최소</div><div>최대</div></div>
+      ${['D','E','N'].map(shift=>`
+        <div class="staffing-row">
+          <div class="staffing-shift">${shiftName[shift]}</div>
+          <label class="mini-field"><span>최소</span><input type="number" value="${ward.staffingRules?.[period]?.[shift]?.min ?? 0}" onchange="updateWardStaffingRule('${period}','${shift}','min',this.value)"></label>
+          <label class="mini-field"><span>최대</span><input type="number" value="${ward.staffingRules?.[period]?.[shift]?.max ?? 0}" onchange="updateWardStaffingRule('${period}','${shift}','max',this.value)"></label>
+        </div>`).join('')}
+    </div>`;
   }
   el.innerHTML=`
     <div class="card">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
         <div>
           <h3>근무자 명단 및 근무 형태</h3>
-          <div class="sub">평일·토요일·일요일/공휴일별 D/E/N 최소·최대 인원을 각각 설정합니다. 0도 유효한 값으로 저장됩니다.</div>
-          <div class="grid3" style="margin-top:12px">
-            <div><h4>평일</h4><div class="grid3" style="margin-top:8px">${staffingInputs('weekday')}</div></div>
-            <div><h4>토요일</h4><div class="grid3" style="margin-top:8px">${staffingInputs('saturday')}</div></div>
-            <div><h4>일요일/공휴일</h4><div class="grid3" style="margin-top:8px">${staffingInputs('holiday')}</div></div>
-          </div>
+          <div class="sub">평일·토요일·일요일/공휴일별 D/E/N 최소·최대 인원을 설정합니다. 0도 유효한 값으로 저장됩니다.</div>
         </div>
-        <div class="row" style="gap:8px">
+        <div class="quick-actions">
           <button class="primary" type="button" onclick="addNurse()">근무자 추가</button>
           <button type="button" onclick="resetWardNurseTable()">되돌리기</button>
           <button class="primary" type="button" onclick="saveWardNurseTable()">저장</button>
         </div>
       </div>
-      <div style="height:12px"></div>
+      <div class="staffing-panel">
+        <div class="staffing-panel-head">
+          <div>
+            <h4>근무 인원 설정 <span class="small muted">(D/E/N 최소·최대)</span></h4>
+            <div class="small muted" style="margin-top:4px">각 칸은 '최소/최대' 문구 옆 숫자칸에 바로 입력합니다.</div>
+          </div>
+          <div class="quick-actions">
+            <button type="button" class="compact-action" onclick="copyStaffingRules('weekday','saturday'); renderWardNurses();">평일 → 토요일 복사</button>
+            <button type="button" class="compact-action" onclick="copyStaffingRules('weekday','holiday'); renderWardNurses();">평일 → 공휴일 복사</button>
+          </div>
+        </div>
+        <div class="staffing-period-grid">
+          ${staffingCard('weekday')}
+          ${staffingCard('saturday')}
+          ${staffingCard('holiday')}
+        </div>
+      </div>
+      <div style="height:16px"></div>
       <div class="nurse-table-wrap">
-        <table class="nurse-table">
+        <table class="nurse-table modern-table">
           <thead>
             <tr>
-              <th>팀</th>
-              <th>직원 명단</th>
-              <th>근무유형</th>
-              <th>배치제한</th>
-              <th>나이트 최대 개수</th>
-              <th>연속근무 최대 개수</th>
-              <th>연속 N 최소</th>
-              <th>연속 N 최대</th>
-              <th>메모</th>
-              <th>관리</th>
+              <th>팀</th><th>직원 명단</th><th>근무유형</th><th>배치제한</th>
+              <th>N 최대 개수</th><th>연속근무 최대</th><th>연속 N</th><th>메모</th><th>관리</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map(n=>`
               <tr>
-                <td>
-                  <select onchange="updateNurseDraft('${n.id}','team',this.value)" class="small-input">
-                    <option ${n.team==='A'?'selected':''}>A</option>
-                    <option ${n.team==='B'?'selected':''}>B</option>
-                    <option ${n.team==='C'?'selected':''}>C</option>
-                  </select>
-                </td>
-                <td>
-                  <input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" onchange="updateNurseDraft('${n.id}','name',this.value)">
-                </td>
-                <td>
-                  <div class="inline-checks">
-                    ${(data.workTypes||[]).map(w=>`<label class="check-item"><input type="checkbox" ${(n.workTypeIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','workTypeIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)}${w.code?` <span class="badge">${escapeHtml(w.code)}</span>`:''}</span></label>`).join('') || '<span class="muted">근무유형 없음</span>'}
-                  </div>
-                </td>
-                <td>
-                  <div class="inline-checks">
-                    ${(getSortedPlacementRules()).map(w=>`<label class="check-item"><input type="checkbox" ${(n.placementRuleIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','placementRuleIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)} <span class="badge">${w.priority||''}</span></span></label>`).join('') || '<span class="muted">배치기준 없음</span>'}
-                  </div>
-                </td>
-                <td><input type="number" class="small-input" value="${n.maxNightPerMonth ?? data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6}" onchange="updateNurseDraft('${n.id}','maxNightPerMonth',Number(this.value))"></td>
-                <td><input type="number" class="small-input" value="${n.maxConsecutiveDays ?? data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5}" onchange="updateNurseDraft('${n.id}','maxConsecutiveDays',Number(this.value))"></td>
-                <td><input type="number" class="small-input" value="${n.minConsecutiveNight ?? data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0}" onchange="updateNurseDraft('${n.id}','minConsecutiveNight',Number(this.value))"></td>
-                <td><input type="number" class="small-input" value="${n.maxConsecutiveNight ?? data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3}" onchange="updateNurseDraft('${n.id}','maxConsecutiveNight',Number(this.value))"></td>
+                <td><select onchange="updateNurseDraft('${n.id}','team',this.value)" class="small-input"><option ${n.team==='A'?'selected':''}>A</option><option ${n.team==='B'?'selected':''}>B</option><option ${n.team==='C'?'selected':''}>C</option></select></td>
+                <td><input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" onchange="updateNurseDraft('${n.id}','name',this.value)"></td>
+                <td><div class="inline-checks">${(data.workTypes||[]).map(w=>`<label class="check-item"><input type="checkbox" ${(n.workTypeIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','workTypeIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)}${w.code?` <span class="badge">${escapeHtml(w.code)}</span>`:''}</span></label>`).join('') || '<span class="muted">근무유형 없음</span>'}</div></td>
+                <td><div class="inline-checks">${(getSortedPlacementRules()).map(w=>`<label class="check-item"><input type="checkbox" ${(n.placementRuleIds||[]).includes(w.id)?'checked':''} onchange="toggleNurseDraftSelection('${n.id}','placementRuleIds','${w.id}',this.checked)"><span>${escapeHtml(w.name)} <span class="badge">${w.priority||''}</span></span></label>`).join('') || '<span class="muted">배치기준 없음</span>'}</div></td>
+                <td><label class="mini-field"><span>최대</span><input type="number" value="${n.maxNightPerMonth ?? data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6}" onchange="updateNurseDraft('${n.id}','maxNightPerMonth',Number(this.value))"></label></td>
+                <td><label class="mini-field"><span>최대</span><input type="number" value="${n.maxConsecutiveDays ?? data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5}" onchange="updateNurseDraft('${n.id}','maxConsecutiveDays',Number(this.value))"></label></td>
+                <td><div class="nurse-limit-pair"><label class="mini-field"><span>최소</span><input type="number" value="${n.minConsecutiveNight ?? data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0}" onchange="updateNurseDraft('${n.id}','minConsecutiveNight',Number(this.value))"></label><label class="mini-field"><span>최대</span><input type="number" value="${n.maxConsecutiveNight ?? data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3}" onchange="updateNurseDraft('${n.id}','maxConsecutiveNight',Number(this.value))"></label></div></td>
                 <td><input value="${escapeHtml(n.notes||'')}" placeholder="메모 입력" onchange="updateNurseDraft('${n.id}','notes',this.value)"></td>
-                <td>
-                  <div class="cell-actions">
-                    <select onchange="updateNurseDraft('${n.id}','employmentStatus',this.value)" class="small-input">
-                      <option value="active" ${n.employmentStatus==='active'?'selected':''}>active</option>
-                      <option value="leave" ${n.employmentStatus==='leave'?'selected':''}>leave</option>
-                    </select>
-                    <button class="danger" type="button" onclick="deleteNurse('${n.id}')">삭제</button>
-                  </div>
-                </td>
-              </tr>
-            `).join('') || `<tr><td colspan="10" class="muted">등록된 근무자가 없습니다. 우측 상단의 근무자 추가를 눌러 행을 추가하세요.</td></tr>`}
+                <td><div class="cell-actions"><select onchange="updateNurseDraft('${n.id}','employmentStatus',this.value)" class="small-input"><option value="active" ${n.employmentStatus==='active'?'selected':''}>active</option><option value="leave" ${n.employmentStatus==='leave'?'selected':''}>leave</option></select><button class="danger" type="button" onclick="deleteNurse('${n.id}')">삭제</button></div></td>
+              </tr>`).join('') || `<tr><td colspan="9" class="muted">등록된 근무자가 없습니다. 우측 상단의 근무자 추가를 눌러 행을 추가하세요.</td></tr>`}
           </tbody>
         </table>
       </div>
+      <div class="small muted" style="margin-top:12px">N 최대 개수 0 입력 시 해당 근무자는 Night 근무 배정에서 제외됩니다. 연속 N은 최소·최대를 한 칸에서 함께 설정합니다.</div>
     </div>
   `;
+}
+function copyStaffingRules(fromPeriod,toPeriod){
+  const ward=getCurrentWard();
+  normalizeStaffingRulesStructure(ward);
+  ward.staffingRules[toPeriod]=cloneJson(ward.staffingRules[fromPeriod]||{});
+  saveData(true);
 }
 function checkboxHtml(){ return ''; }
 
@@ -3103,19 +3103,48 @@ function renderWardRequests(){ return renderWardChange(); }
 function renderWardLeave(){
   const ward=getCurrentWard(), el=document.getElementById('tab-ward-leave');
   const leaveList = ward.leaveRequests || ward.requests || [];
+  const selectedNurse=document.getElementById('leaveNurse')?.value || (ward.nurses?.[0]?.id || '');
+  const selectedType=document.getElementById('leaveType')?.value || 'WO';
+  const selectedPriority=document.getElementById('leavePriority')?.value || 'must';
+  const selectedNote=document.getElementById('leaveNote')?.value || '';
   el.innerHTML=`
     <div class="card">
-      <h3>휴가</h3>
-      <div class="sub">시작일과 종료일을 지정하면 여러 날짜가 한 번에 등록됩니다. 하루만 신청할 때는 시작일과 종료일을 같은 날짜로 입력하세요.</div>
-      <div class="grid2" style="margin-top:12px">
-        <div class="field"><div class="label">간호사</div><select id="leaveNurse">${ward.nurses.map(n=>`<option value="${n.id}">${n.name}</option>`).join('')}</select></div>
-        <div class="field"><div class="label">유형</div><select id="leaveType"><option>WO</option><option>AL</option><option>SL</option></select></div>
-        <div class="field"><div class="label">시작일</div><input id="leaveStartDate" type="date"></div>
-        <div class="field"><div class="label">종료일</div><input id="leaveEndDate" type="date"></div>
-        <div class="field"><div class="label">우선순위</div><select id="leavePriority"><option value="must">필수 반영</option><option value="preferred">우선 반영</option><option value="optional">가능 시 반영</option></select></div>
-        <div class="field"><div class="label">메모</div><input id="leaveNote"></div>
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h3>휴가 신청 관리</h3>
+          <div class="sub">달력에서 날짜를 클릭하면 저장 전 바스켓에 담기고, 바스켓 날짜를 한 번에 저장합니다.</div>
+        </div>
+        <div class="row">
+          <input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); leaveBasketState=[]; renderWardLeave()">
+          <input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); leaveBasketState=[]; renderWardLeave()">
+        </div>
       </div>
-      <div style="margin-top:12px"><button class="primary" onclick="addWardLeave()">휴가 추가</button></div>
+      <div class="grid4" style="margin-top:12px">
+        <div class="field"><div class="label">간호사</div><select id="leaveNurse">${ward.nurses.map(n=>`<option value="${n.id}" ${selectedNurse===n.id?'selected':''}>${escapeHtml(n.name)}</option>`).join('')}</select></div>
+        <div class="field"><div class="label">휴가 종류</div><select id="leaveType"><option ${selectedType==='WO'?'selected':''}>WO</option><option ${selectedType==='AL'?'selected':''}>AL</option><option ${selectedType==='SL'?'selected':''}>SL</option></select></div>
+        <div class="field"><div class="label">우선순위</div><select id="leavePriority"><option value="must" ${selectedPriority==='must'?'selected':''}>필수 반영</option><option value="preferred" ${selectedPriority==='preferred'?'selected':''}>우선 반영</option><option value="optional" ${selectedPriority==='optional'?'selected':''}>가능 시 반영</option></select></div>
+        <div class="field"><div class="label">메모</div><input id="leaveNote" value="${escapeHtml(selectedNote)}" placeholder="메모 입력"></div>
+      </div>
+      <div class="modern-split" style="margin-top:16px">
+        <div>
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+            <h4>${uiYear}년 ${uiMonth}월</h4>
+            <div class="row"><button type="button" onclick="moveLeaveMonth(-1)">‹</button><button type="button" onclick="moveLeaveMonth(1)">›</button></div>
+          </div>
+          ${renderLeaveBasketCalendar(uiYear,uiMonth)}
+          <div class="small muted" style="margin-top:8px">날짜를 클릭하면 바스켓에 담기고, 다시 클릭하면 빠집니다.</div>
+        </div>
+        <div>
+          <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+            <h4>선택일 바스켓 <span class="badge">${leaveBasketState.length}일</span></h4>
+            <button type="button" class="danger" onclick="clearLeaveBasket();">전체 삭제</button>
+          </div>
+          <div class="basket-list">
+            ${leaveBasketState.length ? leaveBasketState.map(date=>`<div class="basket-item"><span>${date} (${getDowLabel(Number(date.slice(0,4)),Number(date.slice(5,7)),Number(date.slice(8,10)))})</span><button type="button" onclick="removeLeaveBasketDate('${date}')">×</button></div>`).join('') : '<div class="basket-empty">달력에서 휴가 날짜를 선택하세요.</div>'}
+          </div>
+          <button class="primary" style="width:100%;margin-top:12px" onclick="saveLeaveBasket()">휴가 신청 저장</button>
+        </div>
+      </div>
     </div>
     <div class="card">
       <h3>등록된 휴가 목록</h3>
@@ -3124,42 +3153,61 @@ function renderWardLeave(){
     </div>`;
   attachTimeSelectBehavior();
 }
-function eachDateInRange(startDate,endDate){
-  const result=[];
-  const start=new Date(startDate+'T00:00:00');
-  const end=new Date(endDate+'T00:00:00');
-  if(Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return result;
-  for(let cur=new Date(start); cur<=end; cur.setDate(cur.getDate()+1)){
-    result.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`);
+function renderLeaveBasketCalendar(y,m){
+  const firstDow=new Date(y,m-1,1).getDay();
+  const last=daysInMonth(y,m);
+  const prevLast=daysInMonth(m===1?y-1:y,m===1?12:m-1);
+  const cells=[];
+  ['일','월','화','수','목','금','토'].forEach((d,idx)=>cells.push(`<div class="leave-dow ${idx===0?'date-sun':idx===6?'date-sat':''}">${d}</div>`));
+  for(let i=0;i<firstDow;i++) cells.push(`<div class="leave-day muted">${prevLast-firstDow+i+1}</div>`);
+  for(let d=1; d<=last; d++){
+    const date=makeDateKey(y,m,d);
+    const selected=leaveBasketState.includes(date);
+    const cls=getDayNumberClass(y,m,d);
+    cells.push(`<div class="leave-day ${selected?'selected':''} ${cls}" onclick="toggleLeaveBasketDate('${date}')">${d}</div>`);
   }
-  return result;
+  const remain=(7-(cells.length%7))%7;
+  for(let i=1;i<=remain;i++) cells.push(`<div class="leave-day muted">${i}</div>`);
+  return `<div class="leave-calendar-grid">${cells.join('')}</div>`;
 }
-function addWardLeave(){
+function toggleLeaveBasketDate(date){
+  if(leaveBasketState.includes(date)) leaveBasketState=leaveBasketState.filter(x=>x!==date);
+  else leaveBasketState=[...leaveBasketState,date].sort();
+  renderWardLeave();
+}
+function removeLeaveBasketDate(date){ leaveBasketState=leaveBasketState.filter(x=>x!==date); renderWardLeave(); }
+function clearLeaveBasket(){ leaveBasketState=[]; renderWardLeave(); }
+function moveLeaveMonth(delta){
+  uiMonth += delta;
+  if(uiMonth<1){uiMonth=12; uiYear-=1;}
+  if(uiMonth>12){uiMonth=1; uiYear+=1;}
+  leaveBasketState=[];
+  renderWardLeave();
+}
+function saveLeaveBasket(){
   const ward=getCurrentWard();
   const nurseId=document.getElementById('leaveNurse')?.value;
-  const startDate=document.getElementById('leaveStartDate')?.value;
-  const endDate=document.getElementById('leaveEndDate')?.value || startDate;
   const type=document.getElementById('leaveType')?.value;
   const priority=document.getElementById('leavePriority')?.value;
   const note=document.getElementById('leaveNote')?.value || '';
-  if(!nurseId || !startDate) return alert('간호사와 시작일을 입력하세요.');
-  if(endDate < startDate) return alert('종료일은 시작일보다 빠를 수 없습니다.');
-  const dates=eachDateInRange(startDate,endDate);
-  if(!dates.length) return alert('날짜 범위를 확인하세요.');
+  if(!nurseId) return alert('간호사를 선택하세요.');
+  if(!leaveBasketState.length) return alert('바스켓에 담긴 날짜가 없습니다.');
   if(!ward.leaveRequests) ward.leaveRequests=[];
   const stamp=Date.now();
-  dates.forEach((date,idx)=>{
+  leaveBasketState.forEach((date,idx)=>{
     const existing=(ward.leaveRequests||[]).find(r=>r.nurseId===nurseId && r.date===date);
     const item={id:`r-${stamp}-${idx}`, nurseId, date, type, priority, note};
     if(existing) Object.assign(existing,item,{id:existing.id});
     else ward.leaveRequests.push(item);
   });
   ward.requests=ward.leaveRequests;
+  const savedCount=leaveBasketState.length;
+  leaveBasketState=[];
   saveData(true);
   renderApp();
-  popup(`${dates.length}일 휴가가 등록되었습니다.`);
+  popup(`${savedCount}일 휴가가 저장되었습니다.`);
 }
-function addWardRequest(){ addWardLeave(); }
+function addWardRequest(){ saveLeaveBasket(); }
 function deleteWardRequest(id){ deleteWardLeave(id); }
 function deleteWardLeave(id){ const ward=getCurrentWard(); ward.leaveRequests=(ward.leaveRequests||[]).filter(r=>r.id!==id); ward.requests = ward.leaveRequests; saveData(true); renderApp(); }
 function renderWardChange(){
@@ -3486,19 +3534,29 @@ function renderGenerateSummary(){
   nurses.forEach(n=>{
     const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
     const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-    const prevTail=getPreviousMonthTailCodesSinceLastOff(ward,n.id,uiYear,uiMonth);
-    let streak=countTrailingFromArray(prevTail, c=>String(c||'').toUpperCase()==='N'), start=streak>0 ? '전월말' : 0;
-    for(let d=1; d<=daysInMonth(uiYear,uiMonth)+1; d++){
-      const key=d<=daysInMonth(uiYear,uiMonth) ? makeDateKey(uiYear,uiMonth,d) : '';
-      const code=d<=daysInMonth(uiYear,uiMonth) ? String(schedule[key]?.[n.id]||'').toUpperCase() : '';
+    const prev=getPrevMonthYearMonth(uiYear,uiMonth);
+    const prevSchedule=getWardScheduleForMonth(ward,prev.y,prev.m);
+    const prevLast=daysInMonth(prev.y,prev.m);
+    function summaryCodeAt(rel){
+      if(rel>=1){ const key=makeDateKey(uiYear,uiMonth,rel); return String(schedule[key]?.[n.id]||'').toUpperCase(); }
+      const pd=prevLast+rel;
+      if(pd<1) return '';
+      return String(prevSchedule[makeDateKey(prev.y,prev.m,pd)]?.[n.id]||'').toUpperCase();
+    }
+    let streak=0, startDay=null, touchesCurrent=false;
+    for(let rel=-6; rel<=daysInMonth(uiYear,uiMonth)+1; rel++){
+      const code=summaryCodeAt(rel);
       if(code==='N'){
-        if(streak===0) start=d;
+        if(streak===0){ startDay=rel; touchesCurrent=false; }
         streak++;
+        if(rel>=1) touchesCurrent=true;
       } else if(streak>0){
-        const label = start==='전월말' ? `${n.name} 전월 말부터 이어진 연속 N` : `${makeDateKey(uiYear,uiMonth,start)} ${n.name} 연속 N`;
-        if(minNs>0 && streak<minNs) issues.push(`${label} 최소 미달 (${streak}/${minNs})`);
-        if(maxNs>0 && streak>maxNs) issues.push(`${label} 최대 초과 (${streak}/${maxNs})`);
-        streak=0; start=0;
+        if(touchesCurrent){
+          const label=startDay>=1 ? makeDateKey(uiYear,uiMonth,startDay) : '전월 마지막 주';
+          if(minNs>0 && streak<minNs) issues.push(`${label} ${n.name} 연속 N 최소 미달 (${streak}/${minNs})`);
+          if(maxNs>0 && streak>maxNs) issues.push(`${label} ${n.name} 연속 N 최대 초과 (${streak}/${maxNs})`);
+        }
+        streak=0; startDay=null; touchesCurrent=false;
       }
     }
     const totalOff=Number(stats[n.id]?.totalOff||0);
@@ -3508,7 +3566,7 @@ function renderGenerateSummary(){
   const nightCounts=nightEligible.map(n=>stats[n.id]?.nights||0);
   if(nightCounts.length>1 && Math.max(...nightCounts)-Math.min(...nightCounts)>1) issues.push(`N 균등 분배 확인 필요 (${Math.min(...nightCounts)}~${Math.max(...nightCounts)})`);
   const unique=[...new Set(issues)];
-  if(unique.length===0) return `<div class="ok" style="margin-top:8px">근무인원 부족, 배치제한 위반, 신규 단독근무 위험 없음 · 전월 마지막 OFF 이후 연속흐름 포함 점검 완료</div>`;
+  if(unique.length===0) return `<div class="ok" style="margin-top:8px">근무인원 부족, 배치제한 위반, 신규 단독근무 위험 없음 · 현재 표 기준 점검 완료</div>`;
   return `<div><div class="alert" style="margin-top:8px"><strong>근무표 확인 필요</strong></div>${unique.map(w=>`<div class="alert" style="margin-top:8px">${w}</div>`).join('')}</div>`;
 }
 
@@ -3577,7 +3635,7 @@ function renderWardSchedule(){
       <div class="row" style="justify-content:space-between;align-items:center">
         <div>
           <h3>${ward.name} 근무표</h3>
-          <div class="sub">자동 생성 후 근무코드를 확인하고, 저장 버튼을 누르면 해당 월 근무표가 보관함에 월별로 누적 저장됩니다.</div>
+          <div class="sub">자동 생성 후 근무코드를 확인하고 저장합니다. 다음 달 생성 시 전월 마지막 주 근무 흐름까지 이어서 반영됩니다.</div>
         </div>
         <div class="row">
           <input type="number" style="width:110px" value="${uiYear}" onchange="uiYear=Number(this.value); renderWardSchedule()">
