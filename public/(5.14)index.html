@@ -966,7 +966,6 @@ function normalizeWardStructure(ward){
   if(!ward.additionalOffByMonth || typeof ward.additionalOffByMonth !== 'object') ward.additionalOffByMonth = {};
   if(!Array.isArray(ward.calendarEvents)) ward.calendarEvents = [];
   if(!Array.isArray(ward.teamOptions) || ward.teamOptions.length===0) ward.teamOptions = defaultTeamOptions();
-  if(ward.nightRestDaysAfterBlock === undefined || ward.nightRestDaysAfterBlock === null) ward.nightRestDaysAfterBlock = 2;
 
   normalizeStaffingRulesStructure(ward);
 
@@ -1182,121 +1181,6 @@ function generateSchedule(ward,y,m){
     for(let d=day+1; d<=last; d++){ const c=String(codeAt(d,n.id)||'').toUpperCase(); if(c==='N') count++; else break; }
     return count;
   }
-  function nightRestDaysAfterBlock(){
-    return Math.max(0, Number(ward.nightRestDaysAfterBlock ?? data.commonScheduleSettings?.defaultNightRestDaysAfterBlock ?? 2));
-  }
-  function lastNightDistanceBefore(n, day){
-    for(let d=day-1; d>=1; d--){
-      const c=String(codeAt(d,n.id)||'').toUpperCase();
-      if(c==='N') return day-d;
-    }
-    // 전월 마지막 OFF 이후 말일까지 N이 이어졌다면, 전월 말일을 0일로 보고 이번 달 초 재N 텀을 계산합니다.
-    if(previousNightStreakBeforeMonth(n)>0) return day;
-    return Infinity;
-  }
-  function isWithinNightRestGap(n, day){
-    // 전날까지 N이 이어지는 중이면 같은 N 묶음이므로 재N 텀이 아니라 연속 N 규칙으로 판단합니다.
-    if(previousNightStreak(n,day)>0) return false;
-    return lastNightDistanceBefore(n,day) <= nightRestDaysAfterBlock();
-  }
-  function desiredNightBlockLength(n){
-    const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
-    const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-    if(maxNs===0) return 0;
-    let len = minNs>0 ? minNs : 2;
-    if(maxNs>0) len = Math.min(len, maxNs);
-    return Math.max(1, len);
-  }
-  function remainingNightQuota(n){
-    const stats=statNow();
-    const maxN=getNurseNumberSetting(n,'maxNightPerMonth',data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6);
-    return Math.max(0, maxN - Number(stats[n.id]?.nights||0));
-  }
-  function requiredNightLengthFromDay(n,startDay){
-    const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
-    const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-    const carried=previousNightStreak(n,startDay);
-    if(maxNs===0) return 0;
-    if(maxNs>0 && carried>=maxNs) return 0;
-    if(carried>0){
-      const need=Math.max(0, minNs-carried);
-      if(need===0) return 0;
-      return maxNs>0 ? Math.min(need, maxNs-carried) : need;
-    }
-    return desiredNightBlockLength(n);
-  }
-  function tryPlaceNightBlock(n, startDay, phase='nightFirst'){
-    // 병동 수간호사가 근무자별로 지정한 허용 근무코드와 N 최소/최대 연속 조건을 하드 제약으로 적용합니다.
-    if(!allAllowedCodes(n).includes('N')) return false;
-    const carried=previousNightStreak(n,startDay);
-    const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
-    const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-    if(maxNs===0) return false;
-    if(maxNs>0 && carried>=maxNs) return false;
-    let len;
-    if(carried>0){
-      len=Math.max(0,minNs-carried);
-      if(len<=0) return false;
-      if(maxNs>0) len=Math.min(len,maxNs-carried);
-    } else {
-      len=desiredNightBlockLength(n);
-    }
-    const quota=remainingNightQuota(n);
-    // N 최소가 2인데 월간 잔여 N quota가 1개뿐이면 단독 N을 만들지 않습니다.
-    if(len<=0 || quota < len) return false;
-    const touched=[];
-    for(let i=0; i<len; i++){
-      const day=startDay+i;
-      if(day>last){ touched.forEach(([k,old])=>{ if(old) schedule[k][n.id]=old; else delete schedule[k][n.id]; }); return false; }
-      const key=makeDateKey(y,m,day);
-      if(dailyCount(key,'N') >= maxForDay(day,'N')){ touched.forEach(([k,old])=>{ if(old) schedule[k][n.id]=old; else delete schedule[k][n.id]; }); return false; }
-      if(!canPlace(n,'N',day,phase,false)){
-        touched.forEach(([k,old])=>{ if(old) schedule[k][n.id]=old; else delete schedule[k][n.id]; });
-        return false;
-      }
-      touched.push([key,schedule[key]?.[n.id]||'']);
-      schedule[key][n.id]='N';
-    }
-    // N 묶음 직후 회복 OFF를 먼저 확보합니다. 고정 휴가/WO가 있으면 유지합니다.
-    for(let r=1; r<=Math.max(1, nightRestDaysAfterBlock()); r++){
-      const day=startDay+len-1+r;
-      if(day>last) break;
-      const key=makeDateKey(y,m,day);
-      const cur=schedule[key]?.[n.id]||'';
-      if(!cur){ schedule[key][n.id]='OF'; }
-    }
-    return true;
-  }
-  function nightCycleScore(n, day){
-    const stats=statNow();
-    const c=getNurseConstraints(n);
-    let s=0;
-    s += Number(stats[n.id]?.nights||0)*250; // 월간 N 개수 균등
-    if(c.reduceNight) s += 2000;
-    const dist=lastNightDistanceBefore(n,day);
-    if(dist===Infinity) s -= 600; else s -= Math.min(dist,30)*25; // 오래 쉬고 온 사람 우선
-    s += nurses.filter(x=>x.team===n.team && schedule[makeDateKey(y,m,day)]?.[x.id]==='N').length*40;
-    s += Math.random()*0.001;
-    return s;
-  }
-  function fillNightFirst(){
-    // 수간호사 실무 흐름처럼 Night 라인을 먼저 만들고, Night 후 OFF를 먼저 확보합니다.
-    for(let d=1; d<=last; d++){
-      const key=makeDateKey(y,m,d);
-      while(dailyCount(key,'N') < minForDay(d,'N')){
-        const candidates=nurses
-          .filter(n=>allAllowedCodes(n).includes('N'))
-          .filter(n=>remainingNightQuota(n)>0)
-          .filter(n=>isOff(schedule[key]?.[n.id]||''))
-          .sort((a,b)=>nightCycleScore(a,d)-nightCycleScore(b,d));
-        let placed=false;
-        for(const cand of candidates){
-          if(tryPlaceNightBlock(cand,d,'nightFirst')){ placed=true; break; }
-        }
-        if(!placed) break;
-      }
-    }
-  }
   function canPlace(n, shift, day, phase='extra', allowReplace=false){
     const key=makeDateKey(y,m,day), dtype=getDateType(y,m,day);
     const existing=schedule[key]?.[n.id]||'';
@@ -1321,12 +1205,8 @@ function generateSchedule(ward,y,m){
     const maxC=getNurseNumberSetting(n,'maxConsecutiveDays',data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5);
     const minNightStreak=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
     const maxNightStreak=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-    if(shift==='N' && maxN<=0) return false;
-    if(shift==='N' && maxNightStreak===0) return false;
     if(shift==='N' && (stats[n.id]?.nights||0) >= maxN && existing!=='N') return false;
-    if(shift==='N' && isWithinNightRestGap(n,day)) return false;
     if(shift==='N' && maxNightStreak>0 && nightStreakIf(n,day,shift)>maxNightStreak) return false;
-    // N 연속 최소가 채워지기 전에는 D/E/O 등으로 끊지 않습니다. 단, 최대 도달 시에는 별도 연속성 로직에서 OFF 처리합니다.
     if(shift!=='N' && minNightStreak>0 && previousNightStreak(n,day)>0 && previousNightStreak(n,day)<minNightStreak) return false;
     if(maxC>0 && consecutiveIf(n,day,shift)>maxC) return false;
     const prevCode = prevCodeAt(day,n.id);
@@ -1415,7 +1295,7 @@ function generateSchedule(ward,y,m){
   function fillMinimumStaffing(){
     for(let d=1; d<=last; d++){
       const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
-      ['D','E'].forEach(shift=>{
+      ['N','D','E'].forEach(shift=>{
         while(dailyCount(key,shift) < minForDay(d,shift)){
           const candidates=nurses.filter(n=>canPlace(n,shift,d,'minimum')).sort((a,b)=>score(a,shift,key,dtype,'minimum')-score(b,shift,key,dtype,'minimum'));
           if(!candidates.length) break;
@@ -1437,7 +1317,7 @@ function generateSchedule(ward,y,m){
           schedule[key][n.id]='OF';
           return;
         }
-        const possible=allowedWorkCodes(n).filter(shift=>shift!=='N').filter(shift=>canPlace(n,shift,d,'extra')).sort((a,b)=>score(n,a,key,dtype,'extra')-score(n,b,key,dtype,'extra'));
+        const possible=allowedWorkCodes(n).filter(shift=>canPlace(n,shift,d,'extra')).sort((a,b)=>score(n,a,key,dtype,'extra')-score(n,b,key,dtype,'extra'));
         schedule[key][n.id]=possible.length ? possible[0] : 'OF';
       });
     }
@@ -1556,7 +1436,7 @@ function generateSchedule(ward,y,m){
           const existing=schedule[key]?.[n.id]||'';
           if(!['','O','OF'].includes(existing)) continue;
           const possible=allowedWorkCodes(n)
-            .filter(shift=>['D','E','MD','SD6'].includes(shift))
+            .filter(shift=>['D','E','N','MD','SD6'].includes(shift))
             .filter(shift=>!['D','E','N'].includes(shift) || dailyCount(key,shift) < maxForDay(d,shift))
             .filter(shift=>canPlace(n,shift,d,'extra',true))
             .sort((a,b)=>score(n,a,key,getDateType(y,m,d),'extra')-score(n,b,key,getDateType(y,m,d),'extra'));
@@ -1596,67 +1476,8 @@ function generateSchedule(ward,y,m){
     }
   }
 
-  function enforceNurseConfiguredHardRules(){
-    // 병동 수간호사 페이지의 근무자별 설정값을 최종 하드 제약으로 다시 확인합니다.
-    // 1) 개인 허용 근무코드 외 배정 제거  2) N=0/연속N 최대 0 제거  3) N 최소/최대 연속 위반 제거
-    let changed=false;
-    for(let d=1; d<=last; d++){
-      const key=makeDateKey(y,m,d), dtype=getDateType(y,m,d);
-      nurses.forEach(n=>{
-        const code=String(schedule[key]?.[n.id]||'').toUpperCase();
-        if(!code) return;
-        if(workCodes.includes(code) && !allAllowedCodes(n).includes(code)){
-          schedule[key][n.id]='OF'; changed=true; return;
-        }
-        if(workCodes.includes(code) && isRestricted(n,dtype)){
-          schedule[key][n.id]='OF'; changed=true; return;
-        }
-        if(code==='N'){
-          const maxN=getNurseNumberSetting(n,'maxNightPerMonth',data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6);
-          const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-          if(maxN<=0 || maxNs===0){ schedule[key][n.id]='OF'; changed=true; }
-        }
-      });
-    }
-
-    nurses.forEach(n=>{
-      const minNs=getNurseNumberSetting(n,'minConsecutiveNight',data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0);
-      const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-      let carried=previousNightStreakBeforeMonth(n);
-      let blockStart=carried>0 ? 1-carried : 0;
-      for(let d=1; d<=last+1; d++){
-        const code=d<=last ? String(codeAt(d,n.id)||'').toUpperCase() : '';
-        if(code==='N'){
-          if(carried===0) blockStart=d;
-          carried++;
-          if(maxNs>0 && carried>maxNs && d<=last){
-            schedule[makeDateKey(y,m,d)][n.id]='OF';
-            carried=maxNs;
-            changed=true;
-          }
-        } else if(carried>0){
-          const blockEnd=d-1;
-          if(minNs>0 && carried<minNs){
-            // 현재 월 안에 있는 짧은 N 묶음은 단독 N이 되지 않도록 OFF로 되돌립니다.
-            const first=Math.max(1,blockStart);
-            for(let x=first; x<=blockEnd && x<=last; x++){
-              const k=makeDateKey(y,m,x);
-              if(schedule[k]?.[n.id]==='N'){
-                schedule[k][n.id]='OF';
-                changed=true;
-              }
-            }
-          }
-          carried=0; blockStart=0;
-        }
-      }
-    });
-    return changed;
-  }
-
-  // 전월 마지막 OFF 이후 이어진 N 흐름은 다른 배정 원칙보다 먼저 확정하고, Night 라인을 가장 먼저 생성합니다.
+  // 전월 마지막 OFF 이후 이어진 N 흐름은 다른 배정 원칙보다 먼저 확정합니다.
   enforceCarriedNightContinuity();
-  fillNightFirst();
 
   // 1) 공통 생성원칙은 우선순위대로 실행하되, 절대 제한은 항상 유지합니다.
   const ran={min:false, fill:false, balance:false};
@@ -1688,7 +1509,7 @@ function generateSchedule(ward,y,m){
           if(workCodes.includes(code) && isRestricted(n,dtype)){ schedule[key][n.id]='OF'; changed=true; }
           if(code && workCodes.includes(code) && !allAllowedCodes(n).includes(code)){ schedule[key][n.id]='OF'; changed=true; }
         });
-        ['D','E'].forEach(shift=>{
+        ['N','D','E'].forEach(shift=>{
           while(dailyCount(key,shift) < minForDay(d,shift)){
             const candidates=nurses.filter(n=>isOff(schedule[key]?.[n.id]) && canPlace(n,shift,d,'minimum',true)).sort((a,b)=>score(a,shift,key,dtype,'minimum')-score(b,shift,key,dtype,'minimum'));
             if(!candidates.length) break;
@@ -1702,7 +1523,6 @@ function generateSchedule(ward,y,m){
     }
   }
   repairHardConstraints();
-  fillNightFirst();
   reduceAboveMinimumForOffTarget();
   balanceOffBySwaps();
   addWorkForOverOffUpToMax();
@@ -1712,12 +1532,7 @@ function generateSchedule(ward,y,m){
   addWorkForOverOffUpToMax();
   repairHardConstraints();
   enforceCarriedNightContinuity();
-  enforceNurseConfiguredHardRules();
-  fillNightFirst();
-  repairHardConstraints();
-  enforceNurseConfiguredHardRules();
   addWorkForOverOffUpToMax();
-  enforceNurseConfiguredHardRules();
 
   function validateSchedule(){
     const issues=[];
@@ -1754,18 +1569,6 @@ function generateSchedule(ward,y,m){
           if(minNs>0 && streak<minNs) issues.push(`${label} 최소 미달 (${streak}/${minNs})`);
           if(maxNs>0 && streak>maxNs) issues.push(`${label} 최대 초과 (${streak}/${maxNs})`);
           streak=0; start=0;
-        }
-      }
-    });
-    nurses.forEach(n=>{
-      for(let d=1; d<=last; d++){
-        const c=String(codeAt(d,n.id)||'').toUpperCase();
-        if(c==='N' && isWithinNightRestGap(n,d)){
-          issues.push(`${makeDateKey(y,m,d)} ${n.name} N 재배치 텀 부족`);
-        }
-        if(c==='N' && d<last){
-          const next=String(codeAt(d+1,n.id)||'').toUpperCase();
-          if(next==='D' || next==='E') issues.push(`${makeDateKey(y,m,d+1)} ${n.name} N 다음날 ${next} 배정 금지`);
         }
       }
     });
@@ -3170,13 +2973,6 @@ function setDefaultWardTeamOptions(){
   updateWardTeamOptions(defaultTeamOptions().join(','));
 }
 
-function updateWardNightRestDaysAfterBlock(val){
-  const ward=getCurrentWard();
-  if(!ward) return;
-  ward.nightRestDaysAfterBlock = Math.max(0, Number(val||0));
-  saveData(true);
-}
-
 function updateWardStaffingRule(period,shift,key,val){
   const ward=getCurrentWard();
   normalizeStaffingRulesStructure(ward);
@@ -3320,12 +3116,6 @@ function renderWardNurses(){
           ${staffingCard('weekday')}
           ${staffingCard('saturday')}
           ${staffingCard('holiday')}
-        </div>
-        <div class="item" style="margin-top:12px">
-          <h4>나이트 배치 순환 설정</h4>
-          <div class="small muted" style="margin-top:4px">나이트 묶음 종료 후 다시 나이트에 들어가기 전 필요한 최소 간격입니다. 예: 2이면 N N 후 최소 O + D/E 하루를 지난 뒤 다음 N 배정이 가능합니다.</div>
-          <div style="height:8px"></div>
-          <label class="mini-field" style="max-width:220px"><span>N 종료 후 재N 최소 텀</span><input type="number" value="${ward.nightRestDaysAfterBlock ?? 2}" onchange="updateWardNightRestDaysAfterBlock(this.value)"></label>
         </div>
       </div>
       <div style="height:16px"></div>
