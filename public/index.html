@@ -203,6 +203,15 @@ select{
 @media (max-width:1100px){.staffing-period-grid,.modern-split{grid-template-columns:1fr}.staffing-row{grid-template-columns:1fr auto auto}}
 
 
+
+/* v12 Excel pattern visibility and imported schedule controls */
+.pattern-rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.pattern-rule-box{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}
+.pattern-rule-box .title{font-weight:800;margin-bottom:6px}
+.pattern-rule-list{margin:0;padding-left:18px;color:#334155;font-size:13px;line-height:1.6}
+.excel-import-toggle{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:12px;padding:8px 10px;background:#fff;font-size:13px}
+.excel-import-toggle input{width:auto}
+@media (max-width:900px){.pattern-rule-grid{grid-template-columns:1fr}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -3677,7 +3686,11 @@ function renderScheduleUploadAnalysisCard(ward){
           <strong>최근 분석 결과</strong>
           <div class="small muted" style="margin-top:4px">${escapeHtml(analysis.fileName||'업로드 파일')} · ${escapeHtml(analysis.createdAt||'')}</div>
         </div>
-        <button type="button" class="primary" onclick="applyUploadedSchedulePattern()">분석값을 병동 설정에 반영</button>
+        <div class="quick-actions">
+          <button type="button" onclick="showUploadedPatternRules()">분석 원칙 자세히 보기</button>
+          <button type="button" onclick="importUploadedScheduleToCurrentMonth()">업로드 근무표를 현재월에 불러오기</button>
+          <button type="button" class="primary" onclick="applyUploadedSchedulePattern()">분석값을 병동 설정에 반영</button>
+        </div>
       </div>
       <div class="grid3" style="margin-top:12px">
         <div class="pill"><div class="t">N 묶음 후 OFF</div><div class="v">${analysis.suggestedNightRestDaysAfterBlock ?? 2}</div></div>
@@ -3698,6 +3711,7 @@ function renderScheduleUploadAnalysisCard(ward){
         <div class="quick-actions">
           <input id="scheduleExcelUploadInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleScheduleExcelUpload(this.files && this.files[0])">
           <button type="button" class="primary" onclick="document.getElementById('scheduleExcelUploadInput').click()">엑셀 업로드</button>
+          <label class="excel-import-toggle"><input type="checkbox" ${ward.useUploadedScheduleInGeneration!==false?'checked':''} onchange="toggleUseUploadedScheduleInGeneration(this.checked)"> <span>자동생성 시 업로드 근무표 반영</span></label>
         </div>
       </div>
       ${summary}
@@ -3708,6 +3722,113 @@ function renderPatternStaffingSummary(analysis){
   const labels={weekday:'평일',saturday:'토요일',holiday:'일요일/공휴일'};
   const shifts=['D','E','N'];
   return `<div class="nurse-table-wrap" style="margin-top:10px"><table style="min-width:720px"><thead><tr><th>구분</th>${shifts.map(s=>`<th>${s} 최소</th><th>${s} 최대</th>`).join('')}</tr></thead><tbody>${['weekday','saturday','holiday'].map(p=>`<tr><td>${labels[p]}</td>${shifts.map(s=>`<td>${analysis.suggestedStaffingRules[p]?.[s]?.min ?? 0}</td><td>${analysis.suggestedStaffingRules[p]?.[s]?.max ?? 0}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderUploadedPatternPrinciples(analysis){
+  if(!analysis) return '<div class="muted">분석 결과가 없습니다.</div>';
+  const staffingRows = analysis.suggestedStaffingRules ? renderPatternStaffingSummary(analysis) : '<div class="muted">근무 인원 패턴을 찾지 못했습니다.</div>';
+  const monthlyN = analysis.monthlyNightCounts || [];
+  const nText = monthlyN.length ? `월간 N 분포: 최소 ${Math.min(...monthlyN)}개 / 최대 ${Math.max(...monthlyN)}개 / 평균 ${(monthlyN.reduce((a,b)=>a+b,0)/monthlyN.length).toFixed(1)}개` : '월간 N 분포를 충분히 찾지 못했습니다.';
+  const importedCount = analysis.uploadedRecords ? analysis.uploadedRecords.length : (analysis.recordCount||0);
+  return `
+    <div class="pattern-rule-grid">
+      <div class="pattern-rule-box"><div class="title">1. 근무 인원 절대 기준</div>
+        <ul class="pattern-rule-list">
+          <li>평일/토요일/일요일·공휴일별 D/E/N 최소·최대 인원을 실제 근무표에서 추출했습니다.</li>
+          <li>자동생성 시 이 인원을 먼저 충족하고, 부족하면 OFF 부족 경고가 나와야 합니다.</li>
+        </ul>
+      </div>
+      <div class="pattern-rule-box"><div class="title">2. Night → OFF 회복 규칙</div>
+        <ul class="pattern-rule-list">
+          <li>연속 N 최소/최대: ${analysis.suggestedMinConsecutiveNight ?? 0} ~ ${analysis.suggestedMaxConsecutiveNight ?? 0}</li>
+          <li>N 묶음 종료 후 보호 OFF: ${Math.max(2, Number(analysis.suggestedNightRestDaysAfterBlock||2))}개</li>
+          <li>전월 말 N도 다음 달 초 OFF 보호에 포함됩니다.</li>
+        </ul>
+      </div>
+      <div class="pattern-rule-box"><div class="title">3. 연속 근무 / 연속 OFF</div>
+        <ul class="pattern-rule-list">
+          <li>연속근무 최대: ${analysis.suggestedMaxConsecutiveDays ?? '-'}일</li>
+          <li>연속 OFF 최소/최대: ${analysis.suggestedMinConsecutiveOff ?? 1} ~ ${analysis.suggestedMaxConsecutiveOff ?? 3}일</li>
+          <li>불필요한 장기 OFF와 1일짜리 짧은 OFF를 줄이는 기준입니다.</li>
+        </ul>
+      </div>
+      <div class="pattern-rule-box"><div class="title">4. 업로드 근무표 반영</div>
+        <ul class="pattern-rule-list">
+          <li>인식된 근무코드: ${importedCount}개</li>
+          <li>${nText}</li>
+          <li>간호사 이름이 병동 명단과 일치하면 자동생성 결과에 업로드 근무표 값을 우선 반영할 수 있습니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div style="height:12px"></div>
+    ${staffingRows}
+    ${analysis.notes?.length ? `<div class="alert" style="margin-top:12px">${analysis.notes.map(escapeHtml).join('<br>')}</div>` : ''}
+  `;
+}
+function showUploadedPatternRules(){
+  const ward=getCurrentWard();
+  const analysis=ward?.excelPatternAnalysis;
+  if(!analysis) return alert('먼저 기존 근무표 엑셀을 업로드해 분석하세요.');
+  openModal('업로드 근무표 분석 원칙', renderUploadedPatternPrinciples(analysis), [
+    {label:'닫기', action:'close'},
+    {label:'병동 설정에 반영', primary:true, action:function(){ closeModal(); applyUploadedSchedulePattern(); }}
+  ]);
+}
+function toggleUseUploadedScheduleInGeneration(checked){
+  const ward=getCurrentWard();
+  if(!ward) return;
+  ward.useUploadedScheduleInGeneration=!!checked;
+  saveData(true);
+  popup(checked ? '자동생성 시 업로드 근무표를 반영합니다.' : '자동생성 시 업로드 근무표 반영을 해제했습니다.');
+}
+function normalizeNurseNameForMatch(name){
+  return String(name||'').replace(/\s+/g,'').trim().toLowerCase();
+}
+function buildUploadedScheduleForWardMonth(ward,y,m){
+  const analysis=ward?.excelPatternAnalysis;
+  const records=analysis?.uploadedRecords || [];
+  const result={};
+  if(!records.length) return result;
+  const nameToNurse={};
+  (ward.nurses||[]).forEach(n=>{ nameToNurse[normalizeNurseNameForMatch(n.name)] = n; });
+  records.forEach(r=>{
+    const day=Number(r.day);
+    if(!day || day<1 || day>daysInMonth(y,m)) return;
+    const nurse=nameToNurse[normalizeNurseNameForMatch(r.name)];
+    if(!nurse) return;
+    const code=normalizeUploadedDutyCode(r.code);
+    if(!code) return;
+    const key=makeDateKey(y,m,day);
+    if(!result[key]) result[key]={};
+    result[key][nurse.id]=code==='O'?'OF':code;
+  });
+  return result;
+}
+function mergeUploadedScheduleIntoSchedule(ward, schedule, y, m){
+  const uploaded=buildUploadedScheduleForWardMonth(ward,y,m);
+  let applied=0;
+  Object.keys(uploaded).forEach(dateKey=>{
+    if(!schedule[dateKey]) schedule[dateKey]={};
+    Object.keys(uploaded[dateKey]).forEach(nid=>{
+      schedule[dateKey][nid]=uploaded[dateKey][nid];
+      applied++;
+    });
+  });
+  return applied;
+}
+function importUploadedScheduleToCurrentMonth(){
+  const ward=getCurrentWard();
+  if(!ward?.excelPatternAnalysis) return alert('먼저 기존 근무표 엑셀을 업로드해 분석하세요.');
+  const uploaded=buildUploadedScheduleForWardMonth(ward,uiYear,uiMonth);
+  const count=Object.values(uploaded).reduce((sum,row)=>sum+Object.keys(row||{}).length,0);
+  if(!count) return alert('업로드 근무표에서 현재 병동 명단과 일치하는 근무코드를 찾지 못했습니다. 이름이 병동 근무자 명단과 같은지 확인하세요.');
+  if(!confirm(`업로드 근무표 ${count}개 근무코드를 현재 ${uiYear}년 ${uiMonth}월 근무표 초안에 불러올까요?`)) return;
+  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
+  draft.schedule=uploaded;
+  draft.edit=true;
+  resultCache=null;
+  renderWardSchedule();
+  popup('업로드 근무표를 현재월 근무표 초안에 불러왔습니다. 확인 후 저장하세요.');
 }
 function normalizeUploadedDutyCode(value){
   let s=String(value ?? '').trim().toUpperCase();
@@ -3838,6 +3959,8 @@ function buildPatternAnalysis(records, fileName){
     suggestedMinConsecutiveOff:minNonzero(offStreaks,1),
     suggestedMaxConsecutiveOff:offStreaks.length?Math.max(...offStreaks):3,
     suggestedMaxConsecutiveDays:workStreaks.length?Math.max(...workStreaks):5,
+    monthlyNightCounts:nCounts,
+    uploadedRecords:records.map(r=>({sheetName:r.sheetName,name:r.name,day:r.day,code:r.code})),
     nightBlockSamples:nightBlocks.slice(0,100), offAfterNightSamples:offAfter.slice(0,100),
     notes
   };
@@ -3866,6 +3989,7 @@ function handleScheduleExcelUpload(file){
       });
       const analysis=buildPatternAnalysis(allRecords, file.name);
       ward.excelPatternAnalysis=analysis;
+      ward.useUploadedScheduleInGeneration = true;
       saveData(true);
       renderWardNurses();
       popup('엑셀 근무표 분석이 완료되었습니다.');
@@ -4209,6 +4333,13 @@ function updateScheduleCellDraft(wardId,y,m,dateKey,nurseId,val){
 function runWardGenerator(){
   const ward=getCurrentWard();
   const generated=generateSchedule(ward,uiYear,uiMonth);
+  if(ward.useUploadedScheduleInGeneration!==false && ward.excelPatternAnalysis?.uploadedRecords?.length){
+    const applied=mergeUploadedScheduleIntoSchedule(ward, generated.schedule, uiYear, uiMonth);
+    if(applied>0){
+      generated.warnings = generated.warnings || [];
+      generated.warnings.unshift(`업로드 근무표 ${applied}개 근무코드를 자동생성 결과에 우선 반영했습니다.`);
+    }
+  }
   const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
   draft.schedule=cloneJson(generated.schedule);
   draft.edit=false;
@@ -4547,6 +4678,7 @@ function renderWardSchedule(){
           <input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); renderWardSchedule()">
           <button class="primary" type="button" onclick="saveWardSchedule()">저장</button>
           <button class="primary" type="button" onclick="runWardGenerator()">자동 생성</button>
+          <button type="button" onclick="importUploadedScheduleToCurrentMonth()">업로드 근무표 반영</button>
           <button type="button" onclick="cancelWardGeneratedSchedule()">취소</button>
           <button class="danger" type="button" onclick="deleteCurrentMonthWardSchedule()">전체삭제</button>
           <button type="button" onclick="enableWardScheduleEdit()">수정 모드</button>
