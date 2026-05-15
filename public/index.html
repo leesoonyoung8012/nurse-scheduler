@@ -4300,8 +4300,7 @@ function buildStyledExcelHtml(ward,schedule,stats,y,m){
   const nameCell='background:#f8fafc;font-weight:bold;text-align:left;'+border;
   const summary='background:#e2e8f0;font-weight:bold;'+border;
   const title='font-size:18px;font-weight:bold;text-align:left;padding:8px;';
-  let html=`<html><head><meta charset="utf-8"><style>table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt;} .sat{color:#2563eb;font-weight:bold}.sun{color:#dc2626;font-weight:bold}</style><script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-</head><body>`;
+  let html=`<html><head><meta charset="utf-8"><style>table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt;} .sat{color:#2563eb;font-weight:bold}.sun{color:#dc2626;font-weight:bold}</style></head><body>`;
   html+=`<table><tr><td colspan="${dayCount+7}" style="${title}">${escapeHtml(ward.name)} ${y}년 ${m}월 근무표</td></tr>`;
   html+='<tr><td style="'+header+'">간호사</td>';
   for(let d=1; d<=dayCount; d++){
