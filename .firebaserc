@@ -1,5 +1,31 @@
 {
   "projects": {
     "default": "nurse-scheduler-8d58e"
-  }
+  },
+  "targets": {
+    "nurse-scheduler-8d58e": {
+      "hosting": {
+        "main": [
+          "nurse-scheduler-8d58e"
+        ],
+        "lsy-duty": [
+          "lsy-duty"
+        ]
+      }
+    },
+    "lsy-duty-f8012": {
+      "hosting": {
+        "main": [
+          "lsy-duty-f8012"
+        ],
+        "duty-lsy": [
+          "duty-lsy"
+        ],
+        "ai-duty-lsy": [
+          "ai-duty-lsy"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

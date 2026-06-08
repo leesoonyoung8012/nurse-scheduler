@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nurse-scheduler",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-l", "5500", "public"],
+      "port": 5500
+    }
+  ]
+}

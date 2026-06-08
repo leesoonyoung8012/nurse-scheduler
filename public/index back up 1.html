@@ -849,57 +849,20 @@ function watchFirebaseData(){
       if(!snapshot.exists()) return;
       const incoming = snapshot.val();
       if(!incoming || typeof incoming !== 'object') return;
-      // ensureDataDefaults 적용 후 비교해야 합니다.
-      // 적용 전 incomingText vs lastSavedSnapshot(적용 후)는 항상 달라서 무한 재렌더링이 발생합니다.
+      const incomingText = JSON.stringify(incoming);
+      if(incomingText === lastSavedSnapshot) return;
       data = incoming;
       ensureDataDefaults();
       const fixedText = JSON.stringify(data);
-      if(fixedText === lastSavedSnapshot) return;
       localStorage.setItem(STORAGE_KEY, fixedText);
       lastSavedSnapshot = fixedText;
       if(currentUser){
+        nurseDraftState={};
+        scheduleDraftState={};
         const refreshed = (data.users||[]).find(u => u.loginId === currentUser.loginId && u.role === currentUser.role);
         if(refreshed) currentUser = refreshed;
-        scheduleDraftState={};
-
-        // 간호사 테이블 입력 필드에 포커스 중이면 nurseDraftState를 유지한 채 재렌더링 지연
-        const nurseWrap = document.getElementById('wardNurseTableWrap');
-        const activeEl = document.activeElement;
-        const focusedInNurseTable = nurseWrap && activeEl && nurseWrap.contains(activeEl) && activeEl.tagName === 'INPUT';
-
-        const doRender = () => {
-          // 현재 ward의 드래프트(미저장 nurse 포함)를 새 Firebase 데이터에 맞게 병합합니다.
-          if(currentUser && currentUser.role === 'ward' && currentUser.wardId){
-            const prevDraft = nurseDraftState[currentUser.wardId];
-            nurseDraftState = {};
-            if(prevDraft){
-              const ward = (data.wards||[]).find(w=>w.id===currentUser.wardId);
-              if(ward){
-                const dbIds = new Set((ward.nurses||[]).map(n=>n.id));
-                // DB에 없는 행(아직 저장 안 된 새 행)이 있으면 전체 드래프트 복원
-                const hasUnsaved = prevDraft.some(r => !dbIds.has(r.id));
-                if(hasUnsaved) nurseDraftState[currentUser.wardId] = prevDraft;
-              }
-            }
-          } else {
-            nurseDraftState = {};
-          }
-          renderApp();
-          popup('Firebase 데이터가 반영되었습니다.');
-        };
-
-        if(focusedInNurseTable){
-          // 포커스가 nurse 테이블 입력 필드에 있는 동안은 재렌더링하지 않고,
-          // 포커스 이탈(focusout) 시점에 한 번만 재렌더링합니다.
-          const onFocusOut = (e) => {
-            if(nurseWrap.contains(e.relatedTarget)) return; // 테이블 내 다른 입력으로 이동 시 대기 유지
-            document.removeEventListener('focusout', onFocusOut);
-            doRender();
-          };
-          document.addEventListener('focusout', onFocusOut);
-        } else {
-          doRender();
-        }
+        renderApp();
+        popup('Firebase 데이터가 반영되었습니다.');
       }
     });
   }catch(e){
@@ -5919,7 +5882,7 @@ function renderWardNurses(){
                 <td><select class="level-tag-select" onchange="updateNurseDraft('${n.id}','skillLevel',this.value)">${getNurseSkillLevelOptionsHtml(n.skillLevel)}</select><div class="level-help">LV1을 선택하면 신규로 자동 적용됩니다.<br>LV2 주니어 · LV4 이상 시니어</div></td>
                 <td>${renderNurseTagCheckboxes(n.id,n.skillTags)}<div class="level-help">태그는 특수역할 표시이며 현재는 위험조합 검사/경고에 우선 사용됩니다.</div></td>
                 <td><select onchange="updateNurseDraft('${n.id}','team',this.value)" class="team-select">${getWardTeamOptions(ward).map(t=>`<option value="${escapeHtml(t)}" ${String(n.team||'').toUpperCase()===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}</select></td>
-                <td><input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" oninput="updateNurseDraft('${n.id}','name',this.value)"></td>
+                <td><input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" onchange="updateNurseDraft('${n.id}','name',this.value)"></td>
                 <td><select onchange="setNurseDraftSingleWorkType('${n.id}',this.value)"><option value="">선택</option>${(data.workTypes||[]).map(w=>`<option value="${w.id}" ${(n.workTypeIds||[])[0]===w.id?'selected':''}>${escapeHtml(w.name)}${w.code?` (${escapeHtml(w.code)})`:''}</option>`).join('')}</select><div class="small muted" style="margin-top:4px">근무유형은 1개만 선택됩니다.</div></td>
                 <td><div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">${personalShiftRuleSummaryShort(n)?`<span class="condition-summary" title="${escapeHtml(personalShiftRuleSummary(n))}">${escapeHtml(personalShiftRuleSummaryShort(n))}</span>`:''}<button type="button" onclick="openPersonalShiftRuleModal('${n.id}')" style="white-space:nowrap">조건설정</button></div></td>
                 <td>${nightMaxCell}</td>
