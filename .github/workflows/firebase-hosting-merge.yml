@@ -14,6 +14,7 @@ jobs:
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_NURSE_SCHEDULER_8D58E }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_LSY_DUTY_F8012 }}
           channelId: live
-          projectId: nurse-scheduler-8d58e
+          projectId: lsy-duty-f8012
+          target: main
