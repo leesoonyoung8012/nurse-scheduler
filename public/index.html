@@ -5178,158 +5178,9 @@ function resetWardNurseTable(){
 }
 
 
-function renderScheduleUploadAnalysisCard(ward){
-  const analysis=ward?.excelPatternAnalysis;
-  const summary=analysis ? `
-    <div class="item" style="margin-top:12px;background:#f8fafc">
-      <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div>
-          <strong>최근 분석 결과</strong>
-          <div class="small muted" style="margin-top:4px">${escapeHtml(analysis.fileName||'업로드 파일')} · ${escapeHtml(analysis.createdAt||'')}</div>
-        </div>
-        <div class="quick-actions">
-          <button type="button" onclick="showUploadedPatternRules()">분석 원칙 자세히 보기</button>
-          <button type="button" onclick="importUploadedScheduleToCurrentMonth()">업로드 근무표를 현재월에 불러오기</button>
-          <button type="button" class="primary" onclick="applyUploadedSchedulePattern()">분석값을 병동 설정에 반영</button>
-        </div>
-      </div>
-      <div class="grid3" style="margin-top:12px">
-        <div class="pill"><div class="t">N 묶음 후 OFF</div><div class="v">${analysis.suggestedNightRestDaysAfterBlock ?? 2}</div></div>
-        <div class="pill"><div class="t">연속 N 범위</div><div class="v">${analysis.suggestedMinConsecutiveNight ?? 0}~${analysis.suggestedMaxConsecutiveNight ?? 0}</div></div>
-        <div class="pill"><div class="t">연속 OFF 범위</div><div class="v">${analysis.suggestedMinConsecutiveOff ?? 1}~${analysis.suggestedMaxConsecutiveOff ?? 3}</div></div>
-      </div>
-      <div style="height:10px"></div>
-      ${renderPatternStaffingSummary(analysis)}
-      ${analysis.notes?.length ? `<div class="alert" style="margin-top:10px">${analysis.notes.map(escapeHtml).join('<br>')}</div>` : ''}
-    </div>` : '<div id="excelPatternResult" class="muted" style="margin-top:12px">아직 분석한 엑셀 파일이 없습니다.</div>';
-  return `
-    <div class="item" style="margin-top:14px">
-      <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div>
-          <h4>기존 근무표 엑셀 업로드 / 패턴 분석</h4>
-          <div class="small muted" style="margin-top:4px">팀장들이 실제 작성한 완성 근무표를 1개월 또는 12~18개월 단위로 여러 개 업로드하면 월별 D/E/N 인원, 월말↔월초 연계성, N→OFF, 연속근무/연속OFF 패턴을 분석합니다.</div>
-        </div>
-        <div class="quick-actions">
-          <input id="scheduleExcelUploadInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" multiple onchange="handleScheduleExcelUpload(this.files)">
-          <button type="button" class="primary" onclick="document.getElementById('scheduleExcelUploadInput').click()">12개월 엑셀 업로드</button>
-          <label class="excel-import-toggle"><input type="checkbox" ${ward.useUploadedScheduleInGeneration!==false?'checked':''} onchange="toggleUseUploadedScheduleInGeneration(this.checked)"> <span>자동생성 시 업로드 근무표 반영</span></label>
-        </div>
-      </div>
-      ${summary}
-    </div>`;
-}
-function renderPatternStaffingSummary(analysis){
-  if(!analysis || !analysis.suggestedStaffingRules) return '';
-  const labels={weekday:'평일',saturday:'토요일',holiday:'일요일/공휴일'};
-  const shifts=['D','E','N'];
-  return `<div class="nurse-table-wrap" style="margin-top:10px"><table style="min-width:720px"><thead><tr><th>구분</th>${shifts.map(s=>`<th>${s} 최소</th><th>${s} 최대</th>`).join('')}</tr></thead><tbody>${['weekday','saturday','holiday'].map(p=>`<tr><td>${labels[p]}</td>${shifts.map(s=>`<td>${analysis.suggestedStaffingRules[p]?.[s]?.min ?? 0}</td><td>${analysis.suggestedStaffingRules[p]?.[s]?.max ?? 0}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-}
-
-function renderUploadedPatternPrinciples(analysis){
-  if(!analysis) return '<div class="muted">분석 결과가 없습니다.</div>';
-  const staffingRows = analysis.suggestedStaffingRules ? renderPatternStaffingSummary(analysis) : '<div class="muted">근무 인원 패턴을 찾지 못했습니다.</div>';
-  const monthlyN = analysis.monthlyNightCounts || [];
-  const nText = monthlyN.length ? `월간 N 분포: 최소 ${Math.min(...monthlyN)}개 / 최대 ${Math.max(...monthlyN)}개 / 평균 ${(monthlyN.reduce((a,b)=>a+b,0)/monthlyN.length).toFixed(1)}개` : '월간 N 분포를 충분히 찾지 못했습니다.';
-  const importedCount = analysis.uploadedRecords ? analysis.uploadedRecords.length : (analysis.recordCount||0);
-  return `
-    <div class="pattern-rule-grid">
-      <div class="pattern-rule-box"><div class="title">1. 근무 인원 추천 기준</div>
-        <ul class="pattern-rule-list">
-          <li>평일/토요일/일요일·공휴일별 D/E/N 최소·최대 인원을 실제 근무표에서 추출한 참고값입니다.</li>
-          <li>자동생성에 실제 적용되는 값은 위쪽 근무 인원 설정의 병동 수동 입력값입니다.</li>
-        </ul>
-      </div>
-      <div class="pattern-rule-box"><div class="title">2. Night → OFF 회복 규칙</div>
-        <ul class="pattern-rule-list">
-          <li>연속 N 최소/최대: ${analysis.suggestedMinConsecutiveNight ?? 0} ~ ${analysis.suggestedMaxConsecutiveNight ?? 0}</li>
-          <li>N 묶음 종료 후 보호 OFF: ${Math.max(2, Number(analysis.suggestedNightRestDaysAfterBlock||2))}개</li>
-          <li>전월 말 N도 다음 달 초 OFF 보호에 포함됩니다.</li>
-        </ul>
-      </div>
-      <div class="pattern-rule-box"><div class="title">3. 연속 근무 / 연속 OFF</div>
-        <ul class="pattern-rule-list">
-          <li>연속근무 최대: ${analysis.suggestedMaxConsecutiveDays ?? '-'}일</li>
-          <li>연속 OFF 최소/최대: ${analysis.suggestedMinConsecutiveOff ?? 1} ~ ${analysis.suggestedMaxConsecutiveOff ?? 3}일</li>
-          <li>불필요한 장기 OFF와 1일짜리 짧은 OFF를 줄이는 기준입니다.</li>
-        </ul>
-      </div>
-      <div class="pattern-rule-box"><div class="title">4. 업로드 근무표 반영</div>
-        <ul class="pattern-rule-list">
-          <li>인식된 근무코드: ${importedCount}개</li>
-          <li>${nText}</li>
-          <li>간호사 이름이 병동 명단과 일치하면 자동생성 결과에 업로드 근무표 값을 우선 반영할 수 있습니다.</li>
-        </ul>
-      </div>
-    </div>
-    <div style="height:12px"></div>
-    ${staffingRows}
-    ${analysis.notes?.length ? `<div class="alert" style="margin-top:12px">${analysis.notes.map(escapeHtml).join('<br>')}</div>` : ''}
-  `;
-}
-function showUploadedPatternRules(){
-  const ward=getCurrentWard();
-  const analysis=ward?.excelPatternAnalysis;
-  if(!analysis) return alert('먼저 기존 근무표 엑셀을 업로드해 분석하세요.');
-  openModal('업로드 근무표 분석 원칙', renderUploadedPatternPrinciples(analysis), [
-    {label:'닫기', action:'close'},
-    {label:'병동 설정에 반영', primary:true, action:function(){ closeModal(); applyUploadedSchedulePattern(); }}
-  ]);
-}
-function toggleUseUploadedScheduleInGeneration(checked){
-  const ward=getCurrentWard();
-  if(!ward) return;
-  ward.useUploadedScheduleInGeneration=!!checked;
-  saveData(true);
-  popup(checked ? '자동생성 시 업로드 근무표를 반영합니다.' : '자동생성 시 업로드 근무표 반영을 해제했습니다.');
-}
+/* 수동 근무표 엑셀 업로드 - 헬퍼 함수 */
 function normalizeNurseNameForMatch(name){
   return String(name||'').replace(/\s+/g,'').trim().toLowerCase();
-}
-function buildUploadedScheduleForWardMonth(ward,y,m){
-  const analysis=ward?.excelPatternAnalysis;
-  const records=analysis?.uploadedRecords || [];
-  const result={};
-  if(!records.length) return result;
-  const nameToNurse={};
-  (ward.nurses||[]).forEach(n=>{ nameToNurse[normalizeNurseNameForMatch(n.name)] = n; });
-  records.forEach(r=>{
-    const day=Number(r.day);
-    if(!day || day<1 || day>daysInMonth(y,m)) return;
-    const nurse=nameToNurse[normalizeNurseNameForMatch(r.name)];
-    if(!nurse) return;
-    const code=normalizeUploadedDutyCode(r.code);
-    if(!code) return;
-    const key=makeDateKey(y,m,day);
-    if(!result[key]) result[key]={};
-    result[key][nurse.id]=code==='O'?'OF':code;
-  });
-  return result;
-}
-function mergeUploadedScheduleIntoSchedule(ward, schedule, y, m){
-  const uploaded=buildUploadedScheduleForWardMonth(ward,y,m);
-  let applied=0;
-  Object.keys(uploaded).forEach(dateKey=>{
-    if(!schedule[dateKey]) schedule[dateKey]={};
-    Object.keys(uploaded[dateKey]).forEach(nid=>{
-      schedule[dateKey][nid]=uploaded[dateKey][nid];
-      applied++;
-    });
-  });
-  return applied;
-}
-function importUploadedScheduleToCurrentMonth(){
-  const ward=getCurrentWard();
-  if(!ward?.excelPatternAnalysis) return alert('먼저 기존 근무표 엑셀을 업로드해 분석하세요.');
-  const uploaded=buildUploadedScheduleForWardMonth(ward,uiYear,uiMonth);
-  const count=Object.values(uploaded).reduce((sum,row)=>sum+Object.keys(row||{}).length,0);
-  if(!count) return alert('업로드 근무표에서 현재 병동 명단과 일치하는 근무코드를 찾지 못했습니다. 이름이 병동 근무자 명단과 같은지 확인하세요.');
-  if(!confirm(`업로드 근무표 ${count}개 근무코드를 현재 ${uiYear}년 ${uiMonth}월 근무표 초안에 불러올까요?`)) return;
-  const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
-  draft.schedule=uploaded;
-  draft.edit=true;
-  resultCache=null;
-  renderWardSchedule();
-  popup('업로드 근무표를 현재월 근무표 초안에 불러왔습니다. 확인 후 저장하세요.');
 }
 function normalizeUploadedDutyCode(value){
   let s=String(value ?? '').trim().toUpperCase();
@@ -5346,187 +5197,8 @@ function normalizeUploadedDutyCode(value){
   if(['D','E','N','O','OF','WO','AL','SL','HA','HP','MD','SD6'].includes(s)) return s==='OF'?'O':s;
   return '';
 }
-function isUploadedDateCell(v){
-  if(v===null || v===undefined || v==='') return false;
-  if(typeof v==='number') return v>=1 && v<=31;
-  const s=String(v).trim();
-  if(/^\d{1,2}$/.test(s)) return Number(s)>=1 && Number(s)<=31;
-  if(/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}/.test(s)) return true;
-  if(/^\d{1,2}[-/.]\d{1,2}/.test(s)) return true;
-  return false;
-}
-function extractDayNumberFromCell(v){
-  if(typeof v==='number') return Math.max(1,Math.min(31,Math.floor(v)));
-  const s=String(v||'').trim();
-  let m=s.match(/^\d{4}[-/.](\d{1,2})[-/.](\d{1,2})/); if(m) return Number(m[2]);
-  m=s.match(/^(\d{1,2})[-/.](\d{1,2})/); if(m) return Number(m[2]);
-  m=s.match(/^(\d{1,2})$/); if(m) return Number(m[1]);
-  return null;
-}
-function analyzeScheduleRows(rows, sheetName){
-  let best={row:-1, count:0, cols:[]};
-  const limit=Math.min(12, rows.length);
-  for(let r=0;r<limit;r++){
-    const cols=[];
-    (rows[r]||[]).forEach((v,c)=>{ if(isUploadedDateCell(v)) cols.push(c); });
-    if(cols.length>best.count) best={row:r,count:cols.length,cols};
-  }
-  if(best.count<5) return null;
-  const dayByCol={};
-  best.cols.forEach(c=>{ const d=extractDayNumberFromCell(rows[best.row][c]); if(d) dayByCol[c]=d; });
-  const firstDateCol=Math.min(...Object.keys(dayByCol).map(Number));
-  const records=[];
-  for(let r=best.row+1; r<rows.length; r++){
-    const row=rows[r]||[];
-    let name='';
-    for(let c=0;c<firstDateCol;c++){
-      const val=String(row[c]||'').trim();
-      if(val && !/^\d+$/.test(val) && !['간호사','성명','이름','직원명','직원 명단','팀'].includes(val)){ name=val; break; }
-    }
-    if(!name) continue;
-    let hasDuty=false;
-    Object.keys(dayByCol).forEach(c=>{ if(normalizeUploadedDutyCode(row[Number(c)])) hasDuty=true; });
-    if(!hasDuty) continue;
-    Object.keys(dayByCol).forEach(c=>{
-      const code=normalizeUploadedDutyCode(row[Number(c)]);
-      if(code) records.push({sheetName,row:r,name,day:dayByCol[c],code});
-    });
-  }
-  return records.length ? {sheetName,dateHeaderRow:best.row,dayByCol,records} : null;
-}
-function getDatePeriodFromDayNumber(day){
-  const dtype=getDateType(uiYear,uiMonth,day);
-  if(dtype==='sat') return 'saturday';
-  if(dtype==='sun' || dtype==='holiday') return 'holiday';
-  return 'weekday';
-}
-function buildPatternAnalysis(records, fileName){
-  const byDay={}; const byNurse={}; const notes=[];
-  records.forEach(r=>{
-    if(!byDay[r.day]) byDay[r.day]={D:0,E:0,N:0,O:0,WO:0,AL:0,SL:0,HA:0,HP:0,MD:0,SD6:0};
-    byDay[r.day][r.code]=(byDay[r.day][r.code]||0)+1;
-    if(!byNurse[r.name]) byNurse[r.name]={};
-    byNurse[r.name][r.day]=r.code;
-  });
-  const rules={weekday:{},saturday:{},holiday:{}};
-  ['weekday','saturday','holiday'].forEach(p=>['D','E','N'].forEach(s=>rules[p][s]={min:0,max:0}));
-  ['weekday','saturday','holiday'].forEach(period=>{
-    ['D','E','N'].forEach(shift=>{
-      const vals=Object.keys(byDay).map(Number).filter(d=>getDatePeriodFromDayNumber(d)===period).map(d=>Number(byDay[d][shift]||0));
-      rules[period][shift]={min: vals.length?Math.min(...vals):0, max: vals.length?Math.max(...vals):0};
-    });
-  });
-  const nightBlocks=[]; const offAfter=[]; const workStreaks=[]; const offStreaks=[]; const nCounts=[];
-  Object.keys(byNurse).forEach(name=>{
-    const days=Object.keys(byNurse[name]).map(Number).sort((a,b)=>a-b);
-    let i=0;
-    while(i<days.length){
-      const d=days[i], code=byNurse[name][d];
-      if(code==='N'){
-        let len=1; let j=i+1;
-        while(j<days.length && days[j]===days[j-1]+1 && byNurse[name][days[j]]==='N'){ len++; j++; }
-        nightBlocks.push(len);
-        let offLen=0; let k=j;
-        while(k<days.length && days[k]===days[k-1]+1 && ['O','WO','AL','SL','HA','HP'].includes(byNurse[name][days[k]])){ offLen++; k++; }
-        offAfter.push(offLen); i=j; continue;
-      }
-      i++;
-    }
-    let work=0, off=0, nightCount=0;
-    days.forEach((d,idx)=>{
-      const c=byNurse[name][d];
-      if(c==='N') nightCount++;
-      const isWork=['D','E','N','MD','SD6'].includes(c);
-      const isOff=['O','WO','AL','SL','HA','HP'].includes(c);
-      if(isWork){ work++; if(off>0){offStreaks.push(off); off=0;} }
-      else if(isOff){ off++; if(work>0){workStreaks.push(work); work=0;} }
-      else { if(work>0){workStreaks.push(work); work=0;} if(off>0){offStreaks.push(off); off=0;} }
-      if(idx===days.length-1){ if(work>0) workStreaks.push(work); if(off>0) offStreaks.push(off); }
-    });
-    nCounts.push(nightCount);
-  });
-  function mode(arr, fallback=0){
-    const freq={}; arr.filter(v=>Number.isFinite(v)).forEach(v=>freq[v]=(freq[v]||0)+1);
-    const keys=Object.keys(freq).map(Number); if(!keys.length) return fallback;
-    keys.sort((a,b)=>freq[b]-freq[a] || a-b); return keys[0];
-  }
-  function minNonzero(arr, fallback=0){ const vals=arr.filter(v=>v>0); return vals.length?Math.min(...vals):fallback; }
-  const analysis={
-    fileName, createdAt:new Date().toLocaleString(), recordCount:records.length, nurseCount:Object.keys(byNurse).length,
-    suggestedStaffingRules:rules,
-    suggestedMinConsecutiveNight:minNonzero(nightBlocks,0),
-    suggestedMaxConsecutiveNight:nightBlocks.length?Math.max(...nightBlocks):0,
-    suggestedNightRestDaysAfterBlock:Math.max(2, mode(offAfter.filter(v=>v>0), 2)),
-    suggestedMinConsecutiveOff:minNonzero(offStreaks,1),
-    suggestedMaxConsecutiveOff:offStreaks.length?Math.max(...offStreaks):3,
-    suggestedMaxConsecutiveDays:workStreaks.length?Math.max(...workStreaks):5,
-    monthlyNightCounts:nCounts,
-    uploadedRecords:records.map(r=>({sheetName:r.sheetName,name:r.name,day:r.day,code:r.code})),
-    nightBlockSamples:nightBlocks.slice(0,100), offAfterNightSamples:offAfter.slice(0,100),
-    notes
-  };
-  if(records.length<20) analysis.notes.push('인식된 근무코드가 적습니다. 날짜 행과 간호사 이름 열이 포함된 실제 근무표인지 확인하세요.');
-  if(Object.values(rules.weekday).every(x=>x.max===0)) analysis.notes.push('D/E/N 인원 패턴을 충분히 찾지 못했습니다. 근무코드가 D/E/N 또는 데이/이브닝/나이트 형태인지 확인하세요.');
-  return analysis;
-}
-function handleScheduleExcelUpload(file){
-  const ward=getCurrentWard();
-  if(!file || !ward) return;
-  const resultBox=document.getElementById('excelPatternResult');
-  if(resultBox) resultBox.innerHTML='엑셀 파일을 읽는 중입니다...';
-  if(typeof XLSX==='undefined'){
-    alert('엑셀 분석 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 다시 시도하세요.');
-    return;
-  }
-  const reader=new FileReader();
-  reader.onload=function(e){
-    try{
-      const wb=XLSX.read(new Uint8Array(e.target.result), {type:'array'});
-      let allRecords=[];
-      wb.SheetNames.forEach(name=>{
-        const rows=XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, raw:false, blankrows:false});
-        const parsed=analyzeScheduleRows(rows, name);
-        if(parsed) allRecords=allRecords.concat(parsed.records);
-      });
-      const analysis=buildPatternAnalysis(allRecords, file.name);
-      ward.excelPatternAnalysis=analysis;
-      ward.useUploadedScheduleInGeneration = true;
-      saveData(true);
-      renderWardNurses();
-      popup('엑셀 근무표 분석이 완료되었습니다.');
-    }catch(err){
-      console.error(err);
-      alert('엑셀 파일 분석 중 오류가 발생했습니다. 근무표 형식 또는 파일 손상 여부를 확인하세요.');
-      if(resultBox) resultBox.textContent='분석 실패';
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
-function applyUploadedSchedulePattern(){
-  const ward=getCurrentWard();
-  const analysis=ward?.excelPatternAnalysis;
-  if(!ward || !analysis) return alert('먼저 기존 근무표 엑셀을 업로드해 분석하세요.');
-  if(!confirm('분석된 패턴을 이 병동의 나이트/OFF/연속근무 설정에 반영할까요? 병동별 D/E/N 근무 인원 설정은 수동 입력값을 유지합니다.')) return;
-  normalizeStaffingRulesStructure(ward);
-  // 근무 인원 설정은 병동별 수동 운영값입니다. 엑셀 분석 추천값은 참고표로만 보여주고 자동 덮어쓰지 않습니다.
-  ward.staffingRulesSource=ward.staffingRulesSource || 'manual';
-  ward.nightRestDaysAfterBlock=Math.max(2, Number(analysis.suggestedNightRestDaysAfterBlock||2));
-  (ward.nurses||[]).forEach(n=>{
-    if(analysis.suggestedMaxConsecutiveDays) n.maxConsecutiveDays=Number(analysis.suggestedMaxConsecutiveDays);
-    if(analysis.suggestedMinConsecutiveNight!==undefined) n.minConsecutiveNight=Number(analysis.suggestedMinConsecutiveNight);
-    if(analysis.suggestedMaxConsecutiveNight) n.maxConsecutiveNight=Number(analysis.suggestedMaxConsecutiveNight);
-    if(analysis.suggestedMinConsecutiveOff) n.minConsecutiveOff=Number(analysis.suggestedMinConsecutiveOff);
-    if(analysis.suggestedMaxConsecutiveOff) n.maxConsecutiveOff=Number(analysis.suggestedMaxConsecutiveOff);
-  });
-  nurseDraftState[ward.id]=JSON.parse(JSON.stringify(ward.nurses||[]));
-  saveData(true);
-  renderWardNurses();
-  popup('분석값이 반영되었습니다. 근무 인원 설정은 병동 수동 입력값을 유지했습니다.');
-}
-
-
-
-/* v13 실제 12개월 엑셀 다중 업로드/월경계 분석 엔진 */
+function nextDateKey(dateKey){ const [y,m,d]=String(dateKey).split('-').map(Number); const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+1); return makeDateKey(dt.getFullYear(),dt.getMonth()+1,dt.getDate()); }
+function nextMonthKey(y,m){ return m===12 ? `${y+1}-01` : `${y}-${pad(m+1)}`; }
 function inferYearMonthFromText(text, fallbackYear){
   const raw=String(text||'');
   let m=raw.match(/(20\d{2})\s*[년\-_.\/ ]\s*(1[0-2]|0?[1-9])\s*(?:월)?/);
@@ -5555,10 +5227,6 @@ function extractDateInfoFromCell(v, fallbackYM){
   m=s.match(/^(3[01]|[12]?\d)\s*(?:일)?$/);
   if(m) return {year:fallbackYM.year, month:fallbackYM.month, day:Number(m[1])};
   return null;
-}
-function isUploadedDateCellV13(v, fallbackYM){
-  const d=extractDateInfoFromCell(v, fallbackYM);
-  return !!(d && d.day>=1 && d.day<=31 && d.month>=1 && d.month<=12);
 }
 function analyzeScheduleRows(rows, sheetName, fileName, fallbackYM){
   fallbackYM=fallbackYM || inferYearMonthFromText(`${fileName||''} ${sheetName||''}`, uiYear);
@@ -5595,222 +5263,84 @@ function analyzeScheduleRows(rows, sheetName, fileName, fallbackYM){
       const dt=dayByCol[c];
       const maxDay=daysInMonth(dt.year, dt.month);
       if(dt.day>maxDay) return;
-      records.push({fileName,sheetName,row:r,name,year:dt.year,month:dt.month,day:dt.day,dateKey:makeDateKey(dt.year,dt.month,dt.day),code});
+      records.push({fileName,sheetName,name,year:dt.year,month:dt.month,day:dt.day,dateKey:makeDateKey(dt.year,dt.month,dt.day),code});
     });
   }
-  return records.length ? {sheetName,dateHeaderRow:best.row,dayByCol,records} : null;
+  return records.length ? {sheetName,records} : null;
 }
-function getDatePeriodFromRecord(r){
-  const dtype=getDateType(r.year,r.month,r.day);
-  if(dtype==='sat') return 'saturday';
-  if(dtype==='sun' || dtype==='holiday') return 'holiday';
-  return 'weekday';
-}
-function buildPatternAnalysis(records, fileNames){
-  records=(records||[]).filter(r=>r && r.name && r.dateKey && r.code);
-  const notes=[];
-  const fileName=Array.isArray(fileNames) ? `${fileNames.length}개 파일` : String(fileNames||'업로드 파일');
-  const monthSet=[...new Set(records.map(r=>monthKey(r.year,r.month)))].sort();
-  const byDate={}; const byNurse={}; const byNurseMonth={};
+function buildManualScheduleFromRecords(records, ward, year, month){
+  const result={};
+  if(!records || !records.length) return result;
+  const nameToNurse={};
+  (ward.nurses||[]).forEach(n=>{ nameToNurse[normalizeNurseNameForMatch(n.name)] = n; });
   records.forEach(r=>{
-    if(!byDate[r.dateKey]) byDate[r.dateKey]={year:r.year,month:r.month,day:r.day,D:0,E:0,N:0,O:0,WO:0,AL:0,SL:0,MD:0,SD6:0};
-    byDate[r.dateKey][r.code]=(byDate[r.dateKey][r.code]||0)+1;
-    const nk=normalizeNurseNameForMatch(r.name);
-    if(!byNurse[nk]) byNurse[nk]={name:r.name, codes:{}};
-    byNurse[nk].codes[r.dateKey]=r.code;
-    const mk=monthKey(r.year,r.month);
-    if(!byNurseMonth[nk+'|'+mk]) byNurseMonth[nk+'|'+mk]={name:r.name, monthKey:mk, countN:0};
-    if(r.code==='N') byNurseMonth[nk+'|'+mk].countN++;
-  });
-  const rules={weekday:{},saturday:{},holiday:{}};
-  ['weekday','saturday','holiday'].forEach(p=>['D','E','N'].forEach(s=>rules[p][s]={min:0,max:0,avg:0,samples:0}));
-  ['weekday','saturday','holiday'].forEach(period=>{
-    ['D','E','N'].forEach(shift=>{
-      const vals=Object.values(byDate).filter(d=>getDatePeriodFromRecord(d)===period).map(d=>Number(d[shift]||0));
-      rules[period][shift]={min:vals.length?Math.min(...vals):0,max:vals.length?Math.max(...vals):0,avg:vals.length?Number((vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1)):0,samples:vals.length};
-    });
-  });
-  function isWork(c){ return ['D','E','N','MD','SD6'].includes(c); }
-  function isOffCode(c){ return ['O','WO','AL','SL','OF','HA','HP'].includes(c); }
-  const nightBlocks=[], offAfter=[], workStreaks=[], offStreaks=[], nGaps=[], transitionProblems=[];
-  Object.values(byNurse).forEach(obj=>{
-    const dates=Object.keys(obj.codes).sort();
-    let lastNEnd=null;
-    for(let i=0;i<dates.length;i++){
-      const dk=dates[i], c=obj.codes[dk];
-      if(c==='N'){
-        let len=1; let j=i+1;
-        while(j<dates.length && nextDateKey(dates[j-1])===dates[j] && obj.codes[dates[j]]==='N'){ len++; j++; }
-        nightBlocks.push(len);
-        const endKey=dates[j-1];
-        if(lastNEnd){
-          const gap=daysBetweenKeys(lastNEnd, dk)-1;
-          if(gap>=0 && gap<45) nGaps.push(gap);
-        }
-        lastNEnd=endKey;
-        let offLen=0; let k=j;
-        while(k<dates.length && nextDateKey(dates[k-1])===dates[k] && isOffCode(obj.codes[dates[k]])){ offLen++; k++; }
-        offAfter.push(offLen); i=j-1; continue;
-      }
-    }
-    let work=0, off=0;
-    dates.forEach((dk,idx)=>{
-      const c=obj.codes[dk];
-      if(isWork(c)){ work++; if(off>0){ offStreaks.push(off); off=0; } }
-      else if(isOffCode(c)){ off++; if(work>0){ workStreaks.push(work); work=0; } }
-      else { if(work>0){workStreaks.push(work); work=0;} if(off>0){offStreaks.push(off); off=0;} }
-      const nd=dates[idx+1];
-      if(!nd || nextDateKey(dk)!==nd){ if(work>0){workStreaks.push(work); work=0;} if(off>0){offStreaks.push(off); off=0;} }
-      if(nd && nextDateKey(dk)===nd){
-        const ncode=obj.codes[nd];
-        if(c==='E' && ncode==='D') transitionProblems.push(`${obj.name} ${dk} E→${nd} D`);
-        if(c==='N' && (ncode==='D' || ncode==='E')) transitionProblems.push(`${obj.name} ${dk} N→${nd} ${ncode}`);
-      }
-    });
-  });
-  function mode(arr, fallback=0){ const freq={}; arr.filter(v=>Number.isFinite(v)).forEach(v=>freq[v]=(freq[v]||0)+1); const keys=Object.keys(freq).map(Number); if(!keys.length) return fallback; keys.sort((a,b)=>freq[b]-freq[a]||a-b); return keys[0]; }
-  function minNonzero(arr,fallback=0){ const vals=arr.filter(v=>v>0); return vals.length?Math.min(...vals):fallback; }
-  function avg(arr){ return arr.length?Number((arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1)):0; }
-  const monthlyNightCounts=Object.values(byNurseMonth).map(x=>x.countN);
-  const nursePatternRows=Object.values(byNurse).map(obj=>{
-    const vals=Object.values(obj.codes||{});
-    const counts={D:0,E:0,N:0,O:0,OFF:0,WORK:0};
-    vals.forEach(c=>{ if(counts[c]!==undefined) counts[c]++; if(['O','OF','WO','AL','SL','HA','HP'].includes(c)) counts.OFF++; if(['D','E','N','MD','SD6'].includes(c)) counts.WORK++; });
-    const active=['D','E','N'].filter(c=>counts[c]>0).join('/') || 'OFF/기타';
-    let inferred='기타';
-    if(counts.N>0 && counts.D===0 && counts.E===0) inferred='나이트킵 추정';
-    else if(counts.D>0 && counts.E===0 && counts.N===0) inferred='상근/데이킵 추정';
-    else if(counts.D>0 && counts.E>0 && counts.N===0) inferred='D/E 킵 추정';
-    else if(counts.E>0 && counts.N>0 && counts.D===0) inferred='E/N 킵 추정';
-    else if(counts.D>0 && counts.N>0 && counts.E===0) inferred='D/N 킵 추정';
-    else if(counts.D>0 && counts.E>0 && counts.N>0) inferred='3교대 추정';
-    return {name:obj.name, inferred, active, D:counts.D, E:counts.E, N:counts.N, OFF:counts.OFF, WORK:counts.WORK};
-  });
-  const patternTypeCounts={};
-  nursePatternRows.forEach(r=>{ patternTypeCounts[r.inferred]=(patternTypeCounts[r.inferred]||0)+1; });
-  const monthBoundaries=[];
-  for(let i=0;i<monthSet.length-1;i++){
-    const a=monthSet[i], b=monthSet[i+1];
-    const [ay,am]=a.split('-').map(Number), [by,bm]=b.split('-').map(Number);
-    const expected=nextMonthKey(ay,am);
-    if(expected!==b) continue;
-    const aLast=makeDateKey(ay,am,daysInMonth(ay,am));
-    const b1=makeDateKey(by,bm,1), b2=makeDateKey(by,bm,2), b3=makeDateKey(by,bm,3);
-    let nToOff2=0, nEndCount=0, eToD=0, nToDE=0;
-    Object.values(byNurse).forEach(obj=>{
-      const lastCode=obj.codes[aLast]; if(!lastCode) return;
-      if(lastCode==='N'){
-        nEndCount++;
-        if(isOffCode(obj.codes[b1]) && isOffCode(obj.codes[b2])) nToOff2++;
-        if(['D','E'].includes(obj.codes[b1])) nToDE++;
-      }
-      if(lastCode==='E' && obj.codes[b1]==='D') eToD++;
-    });
-    monthBoundaries.push({from:a,to:b,nEndCount,nToOff2,nToOff2Rate:nEndCount?Math.round(nToOff2/nEndCount*100):0,eToD,nToDE,days:[b1,b2,b3]});
-  }
-  const analysis={
-    fileName, fileNames:Array.isArray(fileNames)?fileNames:[], createdAt:new Date().toLocaleString(), recordCount:records.length, nurseCount:Object.keys(byNurse).length, uploadedMonthKeys:monthSet, monthCount:monthSet.length,
-    suggestedStaffingRules:rules,
-    suggestedMinConsecutiveNight:minNonzero(nightBlocks,0), suggestedMaxConsecutiveNight:nightBlocks.length?Math.max(...nightBlocks):0,
-    suggestedNightRestDaysAfterBlock:Math.max(2, mode(offAfter.filter(v=>v>0),2)),
-    suggestedMinConsecutiveOff:minNonzero(offStreaks,1), suggestedMaxConsecutiveOff:offStreaks.length?Math.max(...offStreaks):3,
-    suggestedMaxConsecutiveDays:workStreaks.length?Math.max(...workStreaks):5,
-    suggestedNightGap: nGaps.length?mode(nGaps,0):0,
-    averageNightGap: avg(nGaps), monthlyNightCounts, nursePatternRows, patternTypeCounts,
-    uploadedRecords:records.map(r=>({fileName:r.fileName,sheetName:r.sheetName,name:r.name,year:r.year,month:r.month,day:r.day,dateKey:r.dateKey,code:r.code})),
-    nightBlockSamples:nightBlocks.slice(0,200), offAfterNightSamples:offAfter.slice(0,200), nightGapSamples:nGaps.slice(0,200), monthBoundaries, transitionProblems:transitionProblems.slice(0,100), notes
-  };
-  if(monthSet.length<12) notes.push(`인식된 월이 ${monthSet.length}개월입니다. 12~18개월 전체 학습을 원하면 월별 파일 또는 월별 시트를 업로드하세요.`);
-  if(monthBoundaries.length) notes.push(`월 경계 ${monthBoundaries.length}개 구간을 분석했습니다. 전월 마지막 1~2주 흐름과 다음달 초 배치 연결성을 확인했습니다.`);
-  if(records.length<100) notes.push('인식된 근무코드가 적습니다. 날짜 행과 간호사 이름 열이 포함된 실제 근무표인지 확인하세요.');
-  if(transitionProblems.length) notes.push(`E→D 또는 N→D/E 전환 사례 ${transitionProblems.length}건을 발견했습니다. 예외인지 입력 오류인지 확인이 필요합니다.`);
-  return analysis;
-}
-function nextDateKey(dateKey){ const [y,m,d]=String(dateKey).split('-').map(Number); const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+1); return makeDateKey(dt.getFullYear(),dt.getMonth()+1,dt.getDate()); }
-function nextMonthKey(y,m){ return m===12 ? `${y+1}-01` : `${y}-${pad(m+1)}`; }
-function daysBetweenKeys(a,b){ const [ay,am,ad]=a.split('-').map(Number); const [by,bm,bd]=b.split('-').map(Number); return Math.round((new Date(by,bm-1,bd)-new Date(ay,am-1,ad))/86400000); }
-function handleScheduleExcelUpload(filesArg){
-  const ward=getCurrentWard(); if(!ward) return;
-  const files=Array.from(filesArg||[]).filter(Boolean);
-  if(!files.length) return;
-  const resultBox=document.getElementById('excelPatternResult');
-  if(resultBox) resultBox.innerHTML=`${files.length}개 파일을 읽는 중입니다...`;
-  if(typeof XLSX==='undefined'){ alert('엑셀 분석 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 다시 시도하세요.'); return; }
-  Promise.all(files.map(file=>new Promise((resolve)=>{
-    const reader=new FileReader();
-    reader.onload=function(e){
-      try{
-        const wb=XLSX.read(new Uint8Array(e.target.result), {type:'array', cellDates:true});
-        let recs=[];
-        wb.SheetNames.forEach(name=>{
-          const fallback=inferYearMonthFromText(`${file.name} ${name}`, uiYear);
-          const rows=XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, raw:true, blankrows:false});
-          const parsed=analyzeScheduleRows(rows, name, file.name, fallback);
-          if(parsed) recs=recs.concat(parsed.records);
-        });
-        resolve({fileName:file.name, records:recs, error:null});
-      }catch(err){ console.error(err); resolve({fileName:file.name, records:[], error:err}); }
-    };
-    reader.onerror=function(){ resolve({fileName:file.name, records:[], error:new Error('read error')}); };
-    reader.readAsArrayBuffer(file);
-  }))).then(results=>{
-    const allRecords=results.flatMap(r=>r.records||[]);
-    const analysis=buildPatternAnalysis(allRecords, results.map(r=>r.fileName));
-    const failed=results.filter(r=>r.error).map(r=>r.fileName);
-    if(failed.length) analysis.notes.push(`읽기 실패 파일: ${failed.join(', ')}`);
-    ward.excelPatternAnalysis=analysis;
-    ward.useUploadedScheduleInGeneration=true;
-    saveData(true); renderWardNurses();
-    popup(`12~18개월 근무표 분석 완료: ${analysis.monthCount||0}개월, 근무코드 ${analysis.recordCount||0}개 인식`);
-  });
-}
-function buildUploadedScheduleForWardMonth(ward,y,m){
-  const analysis=ward?.excelPatternAnalysis; const records=analysis?.uploadedRecords || []; const result={};
-  if(!records.length) return result;
-  const nameToNurse={}; (ward.nurses||[]).forEach(n=>{ nameToNurse[normalizeNurseNameForMatch(n.name)] = n; });
-  records.forEach(r=>{
-    if(Number(r.year)!==Number(y) || Number(r.month)!==Number(m)) return;
-    const day=Number(r.day); if(!day || day<1 || day>daysInMonth(y,m)) return;
+    if(Number(r.year)!==Number(year) || Number(r.month)!==Number(month)) return;
+    const day=Number(r.day); if(!day || day<1 || day>daysInMonth(year,month)) return;
     const nurse=nameToNurse[normalizeNurseNameForMatch(r.name)]; if(!nurse) return;
     const code=normalizeUploadedDutyCode(r.code); if(!code) return;
-    const key=makeDateKey(y,m,day); if(!result[key]) result[key]={};
+    const key=makeDateKey(year,month,day); if(!result[key]) result[key]={};
     result[key][nurse.id]=code==='O'?'OF':code;
   });
   return result;
 }
-function renderUploadedPatternPrinciples(analysis){
-  if(!analysis) return '<div class="muted">분석 결과가 없습니다.</div>';
-  const staffingRows = analysis.suggestedStaffingRules ? renderPatternStaffingSummary(analysis) : '<div class="muted">근무 인원 패턴을 찾지 못했습니다.</div>';
-  const monthlyN = analysis.monthlyNightCounts || [];
-  const nText = monthlyN.length ? `월간 N 분포: 최소 ${Math.min(...monthlyN)}개 / 최대 ${Math.max(...monthlyN)}개 / 평균 ${(monthlyN.reduce((a,b)=>a+b,0)/monthlyN.length).toFixed(1)}개` : '월간 N 분포를 충분히 찾지 못했습니다.';
-  const importedCount = analysis.uploadedRecords ? analysis.uploadedRecords.length : (analysis.recordCount||0);
-  const monthText=(analysis.uploadedMonthKeys||[]).join(', ');
-  const boundaryRows=(analysis.monthBoundaries||[]).map(b=>`<tr><td>${b.from} → ${b.to}</td><td>${b.nEndCount}</td><td>${b.nToOff2}/${b.nEndCount} (${b.nToOff2Rate}%)</td><td>${b.nToDE}</td><td>${b.eToD}</td></tr>`).join('');
-  return `
-    <div class="pattern-rule-grid">
-      <div class="pattern-rule-box"><div class="title">1. 12~18개월 업로드 인식</div>
-        <ul class="pattern-rule-list"><li>인식 월: ${analysis.monthCount||0}개월</li><li>${escapeHtml(monthText||'월 정보 없음')}</li><li>근무코드 인식: ${importedCount}개 / 간호사 ${analysis.nurseCount||0}명</li></ul>
-      </div>
-      <div class="pattern-rule-box"><div class="title">2. 근무 인원 추천 기준</div>
-        <ul class="pattern-rule-list"><li>평일/토요일/일요일·공휴일별 D/E/N 최소·최대 인원을 실제 근무표에서 추출한 참고값입니다.</li><li>자동생성에 실제 적용되는 값은 위쪽 근무 인원 설정의 병동 수동 입력값입니다.</li></ul>
-      </div>
-      <div class="pattern-rule-box"><div class="title">3. Night → OFF 회복 규칙</div>
-        <ul class="pattern-rule-list"><li>연속 N 최소/최대: ${analysis.suggestedMinConsecutiveNight ?? 0} ~ ${analysis.suggestedMaxConsecutiveNight ?? 0}</li><li>N 묶음 종료 후 보호 OFF: ${Math.max(2, Number(analysis.suggestedNightRestDaysAfterBlock||2))}개</li><li>N 후 다음 N 텀: 최빈 ${analysis.suggestedNightGap||'-'}일 / 평균 ${analysis.averageNightGap||'-'}일</li></ul>
-      </div>
-      <div class="pattern-rule-box"><div class="title">4. 연속 근무 / 연속 OFF</div>
-        <ul class="pattern-rule-list"><li>연속근무 최대: ${analysis.suggestedMaxConsecutiveDays ?? '-'}일</li><li>연속 OFF 최소/최대: ${analysis.suggestedMinConsecutiveOff ?? 1} ~ ${analysis.suggestedMaxConsecutiveOff ?? 3}일</li><li>${nText}</li></ul>
-      </div>
+function openManualScheduleUploadModal(){
+  const ward=getCurrentWard(); if(!ward) return;
+  const body=`
+    <div class="field"><div class="label">업로드할 근무표의 연도</div><input id="manualUploadYear" type="number" value="${uiYear}" style="width:120px"></div>
+    <div class="field"><div class="label">업로드할 근무표의 월</div><input id="manualUploadMonth" type="number" min="1" max="12" value="${uiMonth}" style="width:90px"></div>
+    <div class="field"><div class="label">근무표 엑셀 파일 (.xlsx/.xls)</div>
+      <input id="manualScheduleFileInput" type="file" accept=".xlsx,.xls" style="margin-top:4px">
     </div>
-    <div class="alert" style="margin-top:12px">
-      <strong>자동생성 대원칙</strong><br>
-      개인별 원티드 OFF/고정휴가 잠금 → 요일조건 N 가능자 우선 → 나이트킵 패턴 → 일반 N 순환 → N 묶음 종료 후 OFF 2개 → 차지/상근/D킵 중심 D 배치 → E 배치와 D/E 균형 → 최종검증 순서로 생성합니다.<br>
-      D/E/N 최소 인원은 먼저 맞추며, 부족해질 수 있는 것은 월 기준OFF입니다. 개인별 근무 불가 코드와 고정휴가는 깨지 않습니다.
-    </div>
-    <div style="height:12px"></div>${staffingRows}
-    <div class="nurse-table-wrap" style="margin-top:12px"><table style="min-width:760px"><thead><tr><th>월 경계</th><th>전월 말 N 인원</th><th>N 묶음 종료 후 OFF 2개</th><th>N→D/E</th><th>E→D</th></tr></thead><tbody>${boundaryRows || '<tr><td colspan="5">연속된 월 경계 데이터가 없습니다.</td></tr>'}</tbody></table></div>
-    <div class="nurse-table-wrap" style="margin-top:12px"><table style="min-width:860px"><thead><tr><th>간호사</th><th>추정 근무유형</th><th>사용 duty</th><th>D</th><th>E</th><th>N</th><th>OFF</th></tr></thead><tbody>${(analysis.nursePatternRows||[]).slice(0,80).map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.inferred)}</td><td>${escapeHtml(r.active)}</td><td>${r.D}</td><td>${r.E}</td><td>${r.N}</td><td>${r.OFF}</td></tr>`).join('') || '<tr><td colspan="7">개인별 패턴을 찾지 못했습니다.</td></tr>'}</tbody></table></div>
-    ${analysis.notes?.length ? `<div class="alert" style="margin-top:12px">${analysis.notes.map(escapeHtml).join('<br>')}</div>` : ''}
+    <div class="small muted" style="margin-top:8px">파일의 첫 행에 날짜(1~31일), 첫 열에 간호사 이름이 있는 형식을 인식합니다. 간호사 이름이 병동 근무자 명단과 일치해야 반영됩니다.</div>
   `;
+  openModal('수동 근무표 엑셀 업로드', body, [
+    {label:'취소', action:'close'},
+    {label:'업로드 및 반영', primary:true, action:function(){
+      const year=Number(document.getElementById('manualUploadYear').value);
+      const month=Number(document.getElementById('manualUploadMonth').value);
+      const fileInput=document.getElementById('manualScheduleFileInput');
+      if(!year || !month || month<1 || month>12){ alert('연도와 월을 올바르게 입력하세요.'); return; }
+      if(!fileInput.files.length){ alert('엑셀 파일을 선택하세요.'); return; }
+      closeModal();
+      handleManualScheduleUpload(fileInput.files[0], year, month);
+    }}
+  ]);
+}
+function handleManualScheduleUpload(file, targetYear, targetMonth){
+  const ward=getCurrentWard(); if(!ward || !file) return;
+  if(typeof XLSX==='undefined'){ alert('엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 다시 시도하세요.'); return; }
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const wb=XLSX.read(new Uint8Array(e.target.result), {type:'array', cellDates:true});
+      let allRecords=[];
+      wb.SheetNames.forEach(name=>{
+        const fallback={year:targetYear, month:targetMonth};
+        const rows=XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, raw:true, blankrows:false});
+        const parsed=analyzeScheduleRows(rows, name, file.name, fallback);
+        if(parsed) allRecords=allRecords.concat(parsed.records);
+      });
+      const schedule=buildManualScheduleFromRecords(allRecords, ward, targetYear, targetMonth);
+      const count=Object.values(schedule).reduce((sum,row)=>sum+Object.keys(row||{}).length, 0);
+      if(!count){
+        alert('근무코드를 인식하지 못했습니다.\n간호사 이름이 병동 근무자 명단과 일치하는지, 파일에 날짜 행과 이름 열이 있는지 확인하세요.');
+        return;
+      }
+      if(!confirm(`${targetYear}년 ${targetMonth}월 근무표를 엑셀에서 ${count}개 코드를 인식했습니다.\n현재 ${targetYear}년 ${targetMonth}월 근무 초안에 덮어씌울까요?`)) return;
+      uiYear=targetYear; uiMonth=targetMonth;
+      const draft=ensureScheduleDraft(ward, targetYear, targetMonth);
+      draft.schedule=schedule;
+      draft.edit=true;
+      resultCache=null;
+      renderApp();
+      setTab('ward-schedule');
+      popup(`${targetYear}년 ${targetMonth}월 근무표를 엑셀에서 불러왔습니다. 확인 후 저장하세요.`);
+    }catch(err){
+      console.error(err);
+      alert('엑셀 파일 읽기 오류: '+err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function renderWardNurses(){
@@ -5934,7 +5464,6 @@ function renderWardNurses(){
         </table>
       </div>
 	      <div class="small muted" style="margin-top:12px">LV1 신규는 최소근무명수에 포함하지 않고 단독배치가 금지됩니다. 레벨은 시니어/주니어 위험조합 검사에 사용되고, 태그는 프리셉터·차지가능 등 특수역할 경고/검사에 우선 사용됩니다. 개인 조건은 근무유형과 별개로 D/E/N의 가능 요일을 제한합니다. N 최대 개수는 일반 N 가능 근무자의 월간 Night 총량입니다. 나이트킵은 월간 목표가 자동계산됩니다. 연속근무 최대는 D/E/N 등 근무가 끊기지 않는 최대일수이고, 연속 N/연속 OFF는 최소·최대를 한 칸에서 함께 설정합니다.</div>
-      ${renderScheduleUploadAnalysisCard(ward)}
     </div>
   `;
   restoreWardNurseScrollState(_scrollState);
@@ -6920,7 +6449,7 @@ function stepFillExcessBasicOffToWork(schedule, ward, y, m){
     if(!isPersonalShiftAllowedForDateType(n,shift,getDateType(y,m,d))) return false;
     return stepCanPlace(n,shift,d,{replace:true,overrideWanted:false,overrideLock:false,overrideStaffingMax:false});
   }
-  for(const shift of ['D','E','N']){
+  for(const shift of ['D','E']){
     for(let pass=0; pass<last*2; pass++){
       let changed=false;
       for(let d=1; d<=last; d++){
@@ -7031,7 +6560,7 @@ function stepRepairUnsafeNightBySeniorWorkConversion(){
     if(!['D','E'].includes(cur)) return true;
     return stepCount(st.schedule,y,m,d,cur,nurses)>getStaffingMinForDate(ward,y,m,d,cur);
   }
-  function canTakeSeniorN(n,d){
+  function canTakeSeniorN(n,d,forSwap=false){
     const cur=codeAt(n,d);
     if(!isNurseSeniorSupport(n)) return false;
     if(codeAt(n,d)==='N') return false;
@@ -7044,7 +6573,7 @@ function stepRepairUnsafeNightBySeniorWorkConversion(){
     if(!canGiveCurrentShift(n,d)) return false;
     const maxN=stepIsNightKeep(n) ? nightKeepMonthlyTargetByDays(last) : getNurseNumberSetting(n,'maxNightPerMonth',data.commonScheduleSettings?.defaultMaxNightPerMonth??6);
     if(scheduleShiftCountForNurse(st.schedule,n,y,m,'N')>=maxN) return false;
-    return stepCanPlace(n,'N',d,{replace:true,overrideLock:true,overrideNightGap:true,overrideMaxNight:false,overrideNextWanted:true});
+    return stepCanPlace(n,'N',d,{replace:true,overrideLock:true,overrideNightGap:true,overrideMaxNight:false,overrideNextWanted:true,overrideStaffingMax:forSwap});
   }
   function needSenior(day){
     if(!shouldEnforceSeniorSupportForShift(nurses,'N')) return false;
@@ -7056,15 +6585,46 @@ function stepRepairUnsafeNightBySeniorWorkConversion(){
     let changed=false;
     for(let d=1; d<=last; d++){
       if(!needSenior(d)) continue;
-      if(stepCount(st.schedule,y,m,d,'N',nurses)>=getStaffingMaxForDate(ward,y,m,d,'N')) continue;
+      const maxForDay=getStaffingMaxForDate(ward,y,m,d,'N');
+      const atMax=maxForDay!==Infinity && stepCount(st.schedule,y,m,d,'N',nurses)>=maxForDay;
       const cands=nurses
-        .filter(n=>canTakeSeniorN(n,d))
+        .filter(n=>canTakeSeniorN(n,d,atMax))
         .sort((a,b)=>{
           const ac=codeAt(a,d), bc=codeAt(b,d);
           const aw=['D','E'].includes(ac)?0:1, bw=['D','E'].includes(bc)?0:1;
           return aw-bw || scheduleShiftCountForNurse(st.schedule,a,y,m,'N')-scheduleShiftCountForNurse(st.schedule,b,y,m,'N') || String(a.name||'').localeCompare(String(b.name||''),'ko');
         });
       if(!cands.length) continue;
+      if(atMax){
+        const donors=nurses
+          .filter(n=>codeAt(n,d)==='N' && !isNurseSeniorSupport(n) && !stepIsNightKeep(n))
+          .sort((a,b)=>scheduleShiftCountForNurse(st.schedule,b,y,m,'N')-scheduleShiftCountForNurse(st.schedule,a,y,m,'N') || String(a.name||'').localeCompare(String(b.name||''),'ko'));
+        let swapped=false;
+        for(const n of cands){
+          for(const donor of donors){
+            const snap=Object.assign({}, st.schedule[key(d)]||{});
+            const nOld=codeAt(n,d), donorOld=codeAt(donor,d);
+            const nLock=stepLockReason(y,m,d,n.id), donorLock=stepLockReason(y,m,d,donor.id);
+            st.schedule[key(d)][donor.id]='OF';
+            stepUnlock(y,m,d,donor.id);
+            st.schedule[key(d)][n.id]='N';
+            stepLock(y,m,d,n.id,'8단계 N 안전조합 시니어 교환');
+            const got=stepCount(st.schedule,y,m,d,'N',nurses);
+            const ok=got>=getStaffingMinForDate(ward,y,m,d,'N') && (maxForDay===Infinity || got<=maxForDay) && !stepNightDayHasUnsafePair(d);
+            if(ok){
+              moves++; changed=true; swapped=true;
+              details.push(`${key(d)} ${donor.name} ${donorOld}→OF, ${n.name} ${nOld||'OF'}→N`);
+              stepLog(`8단계 N 안전조합 시니어 교환 ${key(d)} ${donor.name}→${n.name}`);
+              break;
+            }
+            st.schedule[key(d)]=snap;
+            if(nLock) stepLock(y,m,d,n.id,nLock); else stepUnlock(y,m,d,n.id);
+            if(donorLock) stepLock(y,m,d,donor.id,donorLock); else stepUnlock(y,m,d,donor.id);
+          }
+          if(swapped) break;
+        }
+        continue;
+      }
       const n=cands[0], old=codeAt(n,d);
       st.schedule[key(d)][n.id]='N';
       stepLock(y,m,d,n.id,'8단계 N 안전조합 시니어 전환');
@@ -7557,6 +7117,7 @@ function stepForceSingleNightForDate(d, reason, opts={}){
     })
     .filter(n=>{
       const cur=String(st.schedule[key]?.[n.id]||'').toUpperCase();
+      if(cur==='N') return false;
       if(fixed(cur)) return false;
       if(['D','E','MD','SD6'].includes(cur)) return false;
       // N→D / N→E 법적 전환 금지: 다음날이 D 또는 E면 오늘 N 배치 불가
@@ -7568,7 +7129,9 @@ function stepForceSingleNightForDate(d, reason, opts={}){
     const cur=String(st.schedule[key]?.[n.id]||'').toUpperCase();
     // 최후 보정은 최소 N 인원을 맞추기 위해 N 텀은 완화할 수 있지만, 월간 N 상한은 유지합니다.
     if(stepViolatesPreviousMonthNightReentryGap(n,d)) continue;
+    if(stepViolatesNightReentryGap(n,d)) continue;
     if(stepViolatesNightRecoveryOffGap(n,d)) continue;
+    if(stepViolatesFutureNightGap(n,d)) continue;
     if(cur==='WO') continue;
     if(!stepNightCombinationSafeIfAssign(n,d,{replace:true,overrideLock:true,overrideNightGap:true,overrideNextWanted:true})) continue;
     st.schedule[key][n.id]='N';
@@ -8447,6 +8010,25 @@ function stepImproveNightBlockQuality(){
     s-=Math.max(0,nCount(donor)-5)*25;
     return s;
   }
+  function blockQualityScore(){
+    let score=0;
+    nurses
+      .filter(n=>stepAllowed(n,'N') && !stepIsNightKeep(n))
+      .forEach(n=>{
+        for(const b of blockList(n)){
+          if(b.len===1) score+=500;
+          else if(b.len===2) score-=80;
+          else if(b.len===3) score-=120;
+          else score+=250+(b.len-3)*120;
+          for(let d=b.start; d<=b.end; d++){
+            if(stepViolatesNightReentryGap(n,d)) score+=180;
+            if(stepViolatesNightRecoveryOffGap(n,d)) score+=180;
+            if(stepViolatesFutureNightGap(n,d)) score+=180;
+          }
+        }
+      });
+    return score;
+  }
   function canReceiverTake(receiver, day){
     const cur=codeAt(receiver,day);
     if(!stepIsRest(cur) || isFixedRestCode(cur)) return false;
@@ -8456,10 +8038,14 @@ function stepImproveNightBlockQuality(){
     if(!isPersonalShiftAllowedForDateType(receiver,'N',getDateType(y,m,day))) return false;
     return stepCanPlace(receiver,'N',day,{replace:true,overrideLock:true,overrideNightGap:false,overrideNextWanted:true,overrideRecoveryOff:true,overrideStaffingMax:true});
   }
+  const seenMoves=new Set();
   function transfer(donor, receiver, day){
     if(!donor || !receiver || donor.id===receiver.id) return false;
     if(!isN(donor,day)) return false;
     if(!canReceiverTake(receiver,day)) return false;
+    const moveKey=`${day}:${[donor.id,receiver.id].sort().join('<>')}`;
+    if(seenMoves.has(moveKey)) return false;
+    const beforeScore=blockQualityScore();
     const k=key(day);
     const oldD=st.schedule[k]?.[donor.id]||'';
     const oldR=st.schedule[k]?.[receiver.id]||'';
@@ -8470,7 +8056,10 @@ function stepImproveNightBlockQuality(){
     const shortage=stepCount(st.schedule,y,m,day,'N',nurses)<getStaffingMinForDate(ward,y,m,day,'N');
     const unsafe=stepNightDayHasUnsafePair(day);
     const over=nCount(receiver)>maxN(receiver);
-    if(shortage || unsafe || over){
+    const receiverUnsafe=stepViolatesNightReentryGap(receiver,day) || stepViolatesNightRecoveryOffGap(receiver,day) || stepViolatesFutureNightGap(receiver,day);
+    const donorUnsafe=isN(donor,day) && (stepViolatesNightReentryGap(donor,day) || stepViolatesNightRecoveryOffGap(donor,day) || stepViolatesFutureNightGap(donor,day));
+    const afterScore=blockQualityScore();
+    if(shortage || unsafe || over || receiverUnsafe || donorUnsafe || afterScore>=beforeScore){
       st.schedule[k][donor.id]=oldD;
       st.schedule[k][receiver.id]=oldR;
       if(lD) stepLock(y,m,day,donor.id,lD); else stepUnlock(y,m,day,donor.id);
@@ -8485,10 +8074,13 @@ function stepImproveNightBlockQuality(){
         stepLock(y,m,od,receiver.id,'N후 2OFF');
       }
     }
+    seenMoves.add(moveKey);
     return true;
   }
   let moves=0;
-  for(let pass=0; pass<80; pass++){
+  const startedAt=Date.now();
+  for(let pass=0; pass<20; pass++){
+    if(Date.now()-startedAt>1200) break;
     const singles=allSingles().sort((a,b)=>{
       const ca=nCount(a.n), cb=nCount(b.n);
       if(ca!==cb) return ca-cb;
@@ -8934,7 +8526,7 @@ function stepRunStaffingAdjustment(){
   for(let pass=0; pass<5; pass++){
     let changed=false;
     for(let d=1; d<=last; d++){
-      for(const shift of ['D','E','N']){
+      for(const shift of ['D','E']){
         const configuredMax=getStaffingMaxForDate(ward,st.y,st.m,d,shift);
         const minForShift=getStaffingMinForDate(ward,st.y,st.m,d,shift);
         const max=configuredMax===Infinity ? minForShift : configuredMax;
@@ -9345,6 +8937,72 @@ function stepReduceWorkForOffShortageAtEnd(){
   return {moves, remaining};
 }
 
+
+function stepRepairFinalConsecutiveWorkLimit(){
+  const ward=getCurrentWard(), st=stepEnsureState();
+  if(!ward||!st) return {moves:0, remaining:[]};
+  const nurses=(ward.nurses||[]).filter(n=>n.employmentStatus!=='leave'&&n.employmentStatus!=='inactive');
+  const y=st.y, m=st.m, last=daysInMonth(y,m);
+  function key(d){ return makeDateKey(y,m,d); }
+  function code(n,d){ return String(st.schedule[key(d)]?.[n.id]||'').toUpperCase(); }
+  function set(n,d,c){ if(!st.schedule[key(d)]) st.schedule[key(d)]={}; st.schedule[key(d)][n.id]=c; }
+  function isWork(c){ return ['D','E','N','MD','SD6'].includes(String(c||'').toUpperCase()); }
+  function maxWork(n){ return getNurseNumberSetting(n,'maxConsecutiveDays',data.commonScheduleSettings?.defaultMaxConsecutiveDays??5); }
+  function dayOk(d){
+    for(const sh of ['D','E','N']){
+      const got=stepCount(st.schedule,y,m,d,sh,nurses);
+      if(got<getStaffingMinForDate(ward,y,m,d,sh)) return false;
+      const mx=getStaffingMaxForDate(ward,y,m,d,sh);
+      if(mx!==Infinity && got>mx) return false;
+    }
+    return !stepNightDayHasUnsafePair(d);
+  }
+  let moves=0;
+  for(let pass=0; pass<60; pass++){
+    let changed=false;
+    for(const n of nurses){
+      const max=maxWork(n);
+      if(!max || max<1) continue;
+      let streak=0;
+      for(let d=1; d<=last; d++){
+        streak=isWork(code(n,d)) ? streak+1 : 0;
+        if(streak<=max) continue;
+        const start=d-streak+1;
+        const days=[];
+        for(let x=d; x>=start; x--) days.push(x);
+        for(const x of days){
+          const c=code(n,x);
+          if(!['D','E','MD','SD6'].includes(c)) continue;
+          if(stepLocked(y,m,x,n.id)) continue;
+          if(['D','E'].includes(c) && stepCount(st.schedule,y,m,x,c,nurses)<=getStaffingMinForDate(ward,y,m,x,c)) continue;
+          const old=c;
+          set(n,x,'OF');
+          if(dayOk(x)){
+            stepUnlock(y,m,x,n.id);
+            moves++; changed=true;
+            stepLog(`8단계 연속근무 최종감산 ${n.name} ${makeDateKey(y,m,x)} ${old}→OF`);
+            break;
+          }
+          set(n,x,old);
+        }
+        break;
+      }
+      if(changed) break;
+    }
+    if(!changed) break;
+  }
+  const remaining=[];
+  for(const n of nurses){
+    const max=maxWork(n);
+    let streak=0;
+    for(let d=1; d<=last; d++){
+      streak=isWork(code(n,d)) ? streak+1 : 0;
+      if(max>0 && streak>max) remaining.push(`${n.name} ${makeDateKey(y,m,d)} 연속근무 ${streak}/${max}`);
+    }
+  }
+  return {moves, remaining:[...new Set(remaining)]};
+}
+
 function stepRepairNightReentryGapBySameDaySwap(){
   const ward=getCurrentWard(), st=stepEnsureState();
   if(!ward||!st) return {moves:0, remaining:[]};
@@ -9377,7 +9035,10 @@ function stepRepairNightReentryGapBySameDaySwap(){
     if(!stepAllowed(receiver,'N')) return false;
     if(nCount(receiver)>=maxN(receiver)) return false;
     const cur=code(receiver,d);
-    if(fixedRest(cur) || ['D','E','MD','SD6','N'].includes(cur)) return false;
+    if(fixedRest(cur) || ['MD','SD6','N'].includes(cur)) return false;
+    const donorCanTakeCur=['D','E'].includes(cur) && stepCanPlace(donor,cur,d,{replace:true,overrideLock:true,overrideWanted:true,overrideMinOff:true});
+    const shiftHasSurplus=['D','E'].includes(cur) && stepCount(st.schedule,y,m,d,cur,nurses)>getStaffingMinForDate(ward,y,m,d,cur);
+    if(['D','E'].includes(cur) && !donorCanTakeCur && !shiftHasSurplus) return false;
     if(stepViolatesPreviousMonthNightReentryGap(receiver,d)) return false;
     if(stepViolatesNightRecoveryOffGap(receiver,d)) return false;
     if(stepViolatesNightReentryGap(receiver,d)) return false;
@@ -9386,10 +9047,12 @@ function stepRepairNightReentryGapBySameDaySwap(){
     const recvOld=st.schedule[k]?.[receiver.id]||'';
     const donorLock=stepLockReason(y,m,d,donor.id);
     const recvLock=stepLockReason(y,m,d,receiver.id);
-    set(donor,d,'OF');
+    const donorCanTakeRecvOld=['D','E'].includes(recvOld) && stepCanPlace(donor,recvOld,d,{replace:true,overrideLock:true,overrideWanted:true,overrideMinOff:true});
+    set(donor,d,donorCanTakeRecvOld?recvOld:'OF');
     stepUnlock(y,m,d,donor.id);
-    set(receiver,d,'N');
-    const ok=stepCanPlace(receiver,'N',d,{replace:true,overrideLock:true,overrideNightGap:false,overrideNextWanted:true}) && daySafe(d);
+    const canPlaceReceiver=stepCanPlace(receiver,'N',d,{replace:true,overrideLock:true,overrideNightGap:false,overrideNextWanted:true});
+    if(canPlaceReceiver) set(receiver,d,'N');
+    const ok=canPlaceReceiver && daySafe(d);
     set(donor,d,donorOld);
     set(receiver,d,recvOld);
     if(donorLock) stepLock(y,m,d,donor.id,donorLock); else stepUnlock(y,m,d,donor.id);
@@ -9409,7 +9072,9 @@ function stepRepairNightReentryGapBySameDaySwap(){
         .sort((a,b)=>nCount(a)-nCount(b) || String(a.name||'').localeCompare(String(b.name||''),'ko'));
       if(!cands.length) continue;
       const recv=cands[0], d=row.d;
-      set(row.n,d,'OF');
+      const recvOld=code(recv,d);
+      const donorCanTakeRecvOld=['D','E'].includes(recvOld) && stepCanPlace(row.n,recvOld,d,{replace:true,overrideLock:true,overrideWanted:true,overrideMinOff:true});
+      set(row.n,d,donorCanTakeRecvOld?recvOld:'OF');
       stepUnlock(y,m,d,row.n.id);
       set(recv,d,'N');
       stepLock(y,m,d,recv.id,'3단계 N 재진입 텀 교환보정');
@@ -9421,6 +9086,50 @@ function stepRepairNightReentryGapBySameDaySwap(){
   }
   const remaining=counted.flatMap(n=>violatingNightDays(n).map(d=>`${makeDateKey(y,m,d)} ${n.name} N 재진입 텀 부족`));
   return {moves, remaining:[...new Set(remaining)]};
+}
+
+function stepRemoveUnrepairableNightViolations(reason='3단계 N 하드조건 최종정리'){
+  // 끝까지 교환되지 않은 불법 N은 유지하지 않습니다. 부족은 점검결과로 남기는 것이 안전합니다.
+  const ward=getCurrentWard(), st=stepEnsureState();
+  if(!ward||!st) return {removed:0, details:[]};
+  const nurses=(ward.nurses||[]).filter(n=>n.employmentStatus!=='leave'&&n.employmentStatus!=='inactive'&&stepIsCountedStaff(n));
+  const y=st.y, m=st.m, last=daysInMonth(y,m);
+  function key(d){ return makeDateKey(y,m,d); }
+  function code(n,d){ return String(st.schedule[key(d)]?.[n.id]||'').toUpperCase(); }
+  function maxConsecN(n){
+    let v=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight??3);
+    if(v<=0) v=Number(data.commonScheduleSettings?.defaultMaxConsecutiveNight??3)||3;
+    return v;
+  }
+  function streakAt(n,d){
+    let c=1;
+    for(let x=d-1; x>=1; x--){ if(code(n,x)==='N') c++; else break; }
+    for(let x=d+1; x<=last; x++){ if(code(n,x)==='N') c++; else break; }
+    return c;
+  }
+  let removed=0; const details=[];
+  for(let pass=0; pass<4; pass++){
+    let changed=false;
+    for(const n of nurses){
+      for(let d=1; d<=last; d++){
+        if(code(n,d)!=='N') continue;
+        const badRecovery=stepViolatesNightRecoveryOffGap(n,d);
+        const badReentry=stepViolatesNightReentryGap(n,d);
+        const badFuture=stepViolatesFutureNightGap(n,d);
+        const badStreak=streakAt(n,d)>maxConsecN(n);
+        if(!badRecovery && !badReentry && !badFuture && !badStreak) continue;
+        st.schedule[key(d)][n.id]='OF';
+        stepUnlock(y,m,d,n.id);
+        removed++; changed=true;
+        details.push(`${makeDateKey(y,m,d)} ${n.name}`);
+        stepLog(`${reason} ${makeDateKey(y,m,d)} ${n.name} N→OF`);
+        break;
+      }
+      if(changed) break;
+    }
+    if(!changed) break;
+  }
+  return {removed, details:[...new Set(details)]};
 }
 
 function stepPairSeparatedSingleNightBlocks(){
@@ -9436,10 +9145,15 @@ function stepPairSeparatedSingleNightBlocks(){
     const old=st.schedule[key(d)]?.[n.id]||'';
     const lock=stepLockReason(y,m,d,n.id);
     st.schedule[key(d)][n.id]='';
-    const ok=stepCanPlace(n,'N',d,{replace:true,overrideLock:true,overrideNightGap:true,overrideNextWanted:true,overrideRecoveryOff:true,overrideStaffingMax:true,overrideMaxNight:true});
+    const ok=stepCanPlace(n,'N',d,{replace:true,overrideLock:true,overrideNightGap:false,overrideNextWanted:true,overrideRecoveryOff:false,overrideStaffingMax:true,overrideMaxNight:false});
     st.schedule[key(d)][n.id]=old;
     if(lock) stepLock(y,m,d,n.id,lock); else stepUnlock(y,m,d,n.id);
     return ok;
+  }
+  function nCount(n){ return scheduleShiftCountForNurse(st.schedule,n,y,m,'N'); }
+  function maxN(n){ return stepIsNightKeep(n) ? nightKeepMonthlyTargetByDays(last) : getNurseNumberSetting(n,'maxNightPerMonth',data.commonScheduleSettings?.defaultMaxNightPerMonth??6); }
+  function nurseSafe(n,d){
+    return nCount(n)<=maxN(n) && !stepViolatesNightReentryGap(n,d) && !stepViolatesNightRecoveryOffGap(n,d) && !stepViolatesFutureNightGap(n,d);
   }
   function daySafe(d){
     const got=stepCount(st.schedule,y,m,d,'N',(ward.nurses||[]));
@@ -9468,7 +9182,7 @@ function stepPairSeparatedSingleNightBlocks(){
           st.schedule[k1][b.id]='N';
           st.schedule[k2][b.id]='OF';
           st.schedule[k2][a.id]='N';
-          if(daySafe(d) && daySafe(d+1)){
+          if(daySafe(d) && daySafe(d+1) && nurseSafe(a,d+1) && nurseSafe(b,d)){
             stepUnlock(y,m,d,a.id); stepLock(y,m,d,b.id,'3단계 1N 블록쌍 교환');
             stepUnlock(y,m,d+1,b.id); stepLock(y,m,d+1,a.id,'3단계 1N 블록쌍 교환');
             moves++; changed=true;
@@ -9839,9 +9553,23 @@ function stepRunFinalize(){
   const offStrict3=applyStrictOffBalance(st.schedule, ward, st.y, st.m, {skipTraineeMirror:false});
   const finalOffReduce=stepReduceWorkForOffShortageAtEnd();
   const deFinal2=stepFillDayEveningMinimumAtEnd();
+  const finalNightSafety={swaps:0,removed:0,filled:0};
+  for(let guard=0; guard<3; guard++){
+    const seniorConvert=stepRepairUnsafeNightBySeniorWorkConversion();
+    const pair=stepRepairNightSeniorJuniorPairing();
+    const fill1=stepMandatoryFillNightShortagesWithSafePair();
+    const remove=stepRemoveUnsafeNightJuniorPairs();
+    const fill2=stepMandatoryFillNightShortagesWithSafePair();
+    finalNightSafety.swaps += Number(seniorConvert.moves||0) + Number(pair.swaps||0);
+    finalNightSafety.removed += Number(remove.removed||0);
+    finalNightSafety.filled += Number(fill1.fixed||0) + Number(fill2.fixed||0);
+    if(!seniorConvert.moves && !pair.swaps && !remove.removed && !fill1.fixed && !fill2.fixed) break;
+  }
+  const finalReentryFix=stepRepairNightReentryGapBySameDaySwap();
+  const finalConsecutiveFix=stepRepairFinalConsecutiveWorkLimit();
   const finalOffIssues=collectMonthlyOffBalanceIssues(st.schedule, ward, st.y, st.m);
   const regularOffTarget=getRegularMonthlyOffTarget(ward,st.y,st.m);
-  st.done[8]=true; stepLog(`8단계 신규 동반배치 ${trainee}건, 빈칸 OFF ${off}칸 정리, OFF 연쇄교환 ${post.swaps}건, OFF 목표보정 ${post.offFixed||0}건, 신규 균형보정 ${post.newBalanced||0}건, 신규 N 보정 ${post.newNight}건, 최종구조보정 OFF ${(finalFix.offFixed||0)+(offFinal.offFixed||0)}건, 신규 ${(finalFix.newFixed||0)+(offFinal.newFixed||0)}건, 최평재-프리셉터 동반 ${mirrorFix.mirrored+mirrorFix2.mirrored}칸, 월 기준OFF ${regularOffTarget}개 최종교환 ${(offStrict.moves||0)+(offStrict2.moves||0)+(offStrict3.moves||0)}건, OFF 부족자 최대인원 감산 ${(shortageReduce.moves||0)+(finalOffReduce.moves||0)}건, 최소인원 2인교환 ${minSwap.moves||0}건, 월 기준OFF D/E/N 전환 ${(excessFill.moves||0)+(excessFill2.moves||0)}건, D/E 조합보정 ${(skillFix.moves||0)+(skillFix2.moves||0)+(skillFix3.moves||0)+(skillFix4.moves||0)}건, N 안전조합 최종보정 교환 ${nightSafety.swaps}건·제거 ${nightSafety.removed}건·재충족 ${nightSafety.filled}건, N 재진입 텀 교환 ${(reentryFixFinal.moves||0)+(reentryFixFinal2.moves||0)}건, 월말 N 블록재배치 ${lateNightRebuildFinal.changed?'1':'0'}건 완료${finalOffIssues.length?` · OFF 균형 확인 ${finalOffIssues.slice(0,6).join(' / ')}`:''}${[...(reentryFixFinal.remaining||[]),...(reentryFixFinal2.remaining||[])].length?` · N 텀 잔여 ${[...(reentryFixFinal.remaining||[]),...(reentryFixFinal2.remaining||[])].slice(0,5).join(' / ')}`:''}${[...(shortageReduce.remaining||[]),...(finalOffReduce.remaining||[]),...(excessFill.remaining||[]),...(excessFill2.remaining||[])].length?` · 월 기준OFF 잔여 ${[...(shortageReduce.remaining||[]),...(finalOffReduce.remaining||[]),...(excessFill.remaining||[]),...(excessFill2.remaining||[])].slice(0,5).join(' / ')}`:''}${[...(skillFix.unresolved||[]),...(skillFix2.unresolved||[]),...(skillFix3.unresolved||[]),...(skillFix4.unresolved||[])].length?` · 조합 확인 ${[...(skillFix.unresolved||[]),...(skillFix2.unresolved||[]),...(skillFix3.unresolved||[]),...(skillFix4.unresolved||[])].slice(0,5).join(' / ')}`:''}`); stepPushDraft(); renderWardSchedule();
+  st.done[8]=true; stepLog(`8단계 신규 동반배치 ${trainee}건, 빈칸 OFF ${off}칸 정리, OFF 연쇄교환 ${post.swaps}건, OFF 목표보정 ${post.offFixed||0}건, 신규 균형보정 ${post.newBalanced||0}건, 신규 N 보정 ${post.newNight}건, 최종구조보정 OFF ${(finalFix.offFixed||0)+(offFinal.offFixed||0)}건, 신규 ${(finalFix.newFixed||0)+(offFinal.newFixed||0)}건, 최평재-프리셉터 동반 ${mirrorFix.mirrored+mirrorFix2.mirrored}칸, 월 기준OFF ${regularOffTarget}개 최종교환 ${(offStrict.moves||0)+(offStrict2.moves||0)+(offStrict3.moves||0)}건, OFF 부족자 최대인원 감산 ${(shortageReduce.moves||0)+(finalOffReduce.moves||0)}건, 최소인원 2인교환 ${minSwap.moves||0}건, 월 기준OFF D/E/N 전환 ${(excessFill.moves||0)+(excessFill2.moves||0)}건, D/E 조합보정 ${(skillFix.moves||0)+(skillFix2.moves||0)+(skillFix3.moves||0)+(skillFix4.moves||0)}건, N 안전조합 최종보정 교환 ${nightSafety.swaps+finalNightSafety.swaps}건·제거 ${nightSafety.removed+finalNightSafety.removed}건·재충족 ${nightSafety.filled+finalNightSafety.filled}건, N 재진입 텀 교환 ${(reentryFixFinal.moves||0)+(reentryFixFinal2.moves||0)+(finalReentryFix.moves||0)}건, 연속근무 감산 ${finalConsecutiveFix.moves||0}건, 월말 N 블록재배치 ${lateNightRebuildFinal.changed?'1':'0'}건 완료${finalOffIssues.length?` · OFF 균형 확인 ${finalOffIssues.slice(0,6).join(' / ')}`:''}${[...(reentryFixFinal.remaining||[]),...(reentryFixFinal2.remaining||[]),...(finalReentryFix.remaining||[])].length?` · N 텀 잔여 ${[...(reentryFixFinal.remaining||[]),...(reentryFixFinal2.remaining||[]),...(finalReentryFix.remaining||[])].slice(0,5).join(' / ')}`:''}${(finalConsecutiveFix.remaining||[]).length?` · 연속근무 잔여 ${finalConsecutiveFix.remaining.slice(0,5).join(' / ')}`:''}${[...(shortageReduce.remaining||[]),...(finalOffReduce.remaining||[]),...(excessFill.remaining||[]),...(excessFill2.remaining||[])].length?` · 월 기준OFF 잔여 ${[...(shortageReduce.remaining||[]),...(finalOffReduce.remaining||[]),...(excessFill.remaining||[]),...(excessFill2.remaining||[])].slice(0,5).join(' / ')}`:''}${[...(skillFix.unresolved||[]),...(skillFix2.unresolved||[]),...(skillFix3.unresolved||[]),...(skillFix4.unresolved||[])].length?` · 조합 확인 ${[...(skillFix.unresolved||[]),...(skillFix2.unresolved||[]),...(skillFix3.unresolved||[]),...(skillFix4.unresolved||[])].slice(0,5).join(' / ')}`:''}`); stepPushDraft(); renderWardSchedule();
 }
 
 
@@ -10025,9 +9753,16 @@ function stepRunGeneralNight(){
 
   const weekdaySwap=stepRepairWeekdayNightShortageByWeekendSwap();
   if(weekdaySwap.swaps) stepLog(`3단계 N 주말→평일 재배치 교정 ${weekdaySwap.swaps}건`);
+  const hardNightCleanup=stepRemoveUnrepairableNightViolations();
+  if(hardNightCleanup.removed) stepLog(`3단계 N 하드조건 위반 제거 ${hardNightCleanup.removed}건 · ${hardNightCleanup.details.slice(0,5).join(' / ')}`);
 
   const removedUnsafe=stepRemoveUnsafeNightJuniorPairs();
   if(removedUnsafe.removed){ stepLog(`3단계 N 주니어끼리 배정 최종제거 ${removedUnsafe.removed}건`); }
+  // 하드조건 정리(불법 N 제거/주니어 조합 제거) 후 생긴 N 부족은 마지막에 다시 채웁니다.
+  const postCleanupGuard=stepMandatoryFillNightShortagesWithSafePair();
+  if(postCleanupGuard.fixed){ stepLog(`3단계 하드조건 정리 후 N 재충족 ${postCleanupGuard.fixed}건`); }
+  const postCleanupMinFirst=stepFillRemainingNightShortagesMinimumFirst();
+  if(postCleanupMinFirst.fixed){ stepLog(`3단계 하드조건 정리 후 N 최소인원 최종보정 ${postCleanupMinFirst.fixed}건${postCleanupMinFirst.unresolved.length?` · 잔여 ${postCleanupMinFirst.unresolved.slice(0,5).join(' / ')}`:''}`); }
   const misses=stepNightShortages();
   const unsafe=[];
   for(let d=1; d<=last; d++){ if(stepNightDayHasUnsafePair(d)) unsafe.push(`${makeDateKey(y,m,d)} N 시니어지원자 없음`); }
@@ -10150,13 +9885,6 @@ function runWardGenerator(){
   return;
   const ward=getCurrentWard();
   const generated=generateSchedule(ward,uiYear,uiMonth);
-  if(ward.useUploadedScheduleInGeneration!==false && ward.excelPatternAnalysis?.uploadedRecords?.length){
-    const applied=mergeUploadedScheduleIntoSchedule(ward, generated.schedule, uiYear, uiMonth);
-    if(applied>0){
-      generated.warnings = generated.warnings || [];
-      generated.warnings.unshift(`업로드 근무표 ${applied}개 근무코드를 자동생성 결과에 우선 반영했습니다.`);
-    }
-  }
   const draft=ensureScheduleDraft(ward,uiYear,uiMonth);
   draft.schedule=cloneJson(generated.schedule);
   draft.edit=false;
@@ -10636,7 +10364,7 @@ function renderWardSchedule(){
           <input type="number" style="width:90px" min="1" max="12" value="${uiMonth}" onchange="uiMonth=Number(this.value); renderApp()">
           <button class="primary" type="button" onclick="saveWardSchedule()">저장</button>
           <button class="primary" type="button" onclick="runWardGenerator()">자동 생성</button>
-          <button type="button" onclick="importUploadedScheduleToCurrentMonth()">업로드 근무표 반영</button>
+          <button type="button" onclick="openManualScheduleUploadModal()">수동 근무표 업로드</button>
           <button type="button" onclick="cancelWardGeneratedSchedule()">취소</button>
           <button class="danger" type="button" onclick="deleteCurrentMonthWardSchedule()">전체삭제</button>
           <button type="button" onclick="enableWardScheduleEdit()">수정 모드</button>
