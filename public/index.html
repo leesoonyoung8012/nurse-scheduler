@@ -6685,7 +6685,12 @@ function absoluteSetScheduleCode(schedule,y,m,d,nurseId,code){
 }
 function absoluteIsWorkCode(code){ return ['D','E','N','MD','SD6'].includes(String(code||'').toUpperCase()); }
 function absoluteIsRestCode(code){ return !code || ['O','OF','WO','AL','SL','HA','HP'].includes(String(code||'').toUpperCase()); }
-function absoluteRequiredNightOff(n){ return Math.max(2, Number(typeof stepNightOffCount==='function' ? stepNightOffCount(n) : (data.commonScheduleSettings?.defaultNightRestDaysAfterBlock ?? 2))||2); }
+// N 블록 후 보호 OFF 최소 개수 — 병동 설정(1~2)을 따른다.
+// 예전에는 2를 하한으로 강제해, 최소 1로 설정한 병동의 N 다음 근무를 검증기가 지웠다.
+function absoluteRequiredNightOff(n, ward){
+  if(typeof stepAllowed==='function' && !stepAllowed(n,'N')) return 0;
+  return getWardNightRestDays(ward);
+}
 function absoluteNightBlocksForNurse(schedule, ward, n, y, m){
   const blocks=[]; const last=daysInMonth(y,m); let start=0;
   for(let d=1; d<=last+1; d++){
@@ -6758,13 +6763,13 @@ function collectAbsoluteScheduleViolations(schedule, ward, y, m){
     blocks.forEach(b=>{
       if(b.len<minBlock) add('nightSingleBlock',`${makeDateKey(y,m,b.start)} ${n.name} 단독 1N 사이클 금지`,{day:b.start,nurseId:n.id});
       if(maxNs>0 && b.len>maxNs) add('nightBlockMax',`${makeDateKey(y,m,b.start)} ${n.name} 연속 N 최대 초과 (${b.len}/${maxNs})`,{day:b.start,nurseId:n.id});
-      const need=absoluteRequiredNightOff(n);
+      const need=absoluteRequiredNightOff(n,ward);
       for(let x=b.end+1; x<=Math.min(last,b.end+need); x++){
         const c=absoluteScheduleCode(schedule,y,m,x,n.id);
         if(absoluteIsWorkCode(c)) add('nightRecovery',`${makeDateKey(y,m,x)} ${n.name} N후 ${need}OFF 미준수 (${c})`,{day:x,nurseId:n.id,shift:c});
       }
     });
-    const rem=getPreviousMonthNightRecoveryRemaining(ward,n.id,y,m,absoluteRequiredNightOff(n));
+    const rem=getPreviousMonthNightRecoveryRemaining(ward,n.id,y,m,absoluteRequiredNightOff(n,ward));
     for(let d=1; d<=Math.min(last,rem); d++){
       const code=absoluteScheduleCode(schedule,y,m,d,n.id);
       if(absoluteIsWorkCode(code)) add('prevNightRecovery',`${makeDateKey(y,m,d)} ${n.name} 전월 N후 OFF 연속성 위반 (${code})`,{day:d,nurseId:n.id,shift:code});
@@ -6878,7 +6883,7 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
   function repairNightRules(){
     let changed=0;
     nurses.forEach(n=>{
-      const required=absoluteRequiredNightOff(n);
+      const required=absoluteRequiredNightOff(n,ward);
       const rem=getPreviousMonthNightRecoveryRemaining(ward,n.id,y,m,required);
       for(let d=1; d<=Math.min(last,rem); d++) changed += removeWork(n,d,'전월 N후 2OFF')?1:0;
       const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
@@ -12923,6 +12928,8 @@ function getViolations(state, ward, y, m) {
    전월 마지막 N 블록 후 회복 OFF가 남아있으면
    이번 달 초반 해당 일수만큼 OFF를 선배정하고 잠금.
    canAssign()의 전월 조회를 보완하는 물리적 잠금.
+   Phase 1(WO/휴가) 다음에 돌므로 이미 잠긴 WO/휴가 셀은 건너뛴다 —
+   WO도 OFF 계열이라 회복 보호는 그대로 유지된다.
 ─────────────────────────────────────────────────────────────── */
 function phase0_initializePrevMonthCarryover(state, ward, y, m) {
   const nurses    = (ward.nurses || []).filter(n =>
@@ -12943,8 +12950,7 @@ function phase0_initializePrevMonthCarryover(state, ward, y, m) {
 
 /* ── Phase 1: WO / 휴가 잠금 ────────────────────────────────────
    ward.leaveRequests(=ward.requests)의 모든 휴가·WO를 배정 후 잠금.
-   이후 어떤 Phase도 이 셀을 덮어쓰지 못함.
-   Phase 0에서 이미 잠긴 셀(N 회복기)은 건너뜀.
+   이후 어떤 Phase도 이 셀을 덮어쓰지 못함 (Phase 0보다 먼저 실행).
 ─────────────────────────────────────────────────────────────── */
 function phase1_lockAbsences(state, ward, y, m) {
   const monthPrefix = `${y}-${String(m).padStart(2, '0')}`;
@@ -12962,7 +12968,6 @@ function phase1_lockAbsences(state, ward, y, m) {
     const day  = Number(String(req.date).slice(-2));
     const code = String(req.type || 'WO').toUpperCase();
 
-    // Phase 0에서 N 회복기로 잠긴 셀 건너뜀 (N 회복기 우선)
     if (state.isLocked(req.nurseId, day)) continue;
 
     state.assign(req.nurseId, day, code, 'phase1_lockAbsences');
@@ -14408,8 +14413,10 @@ const SchedulerEngine = {
       nurses: (ward.nurses || []).filter(n => !isHeadNurseExcluded(n)),
     });
 
-    phase0_initializePrevMonthCarryover(state, engineWard, y, m);
+    // WO/휴가(Rule 7)를 먼저 잠근 뒤 전월 회복 OFF로 남은 칸을 채운다.
+    // 순서가 반대면 회복 OFF가 WO 셀을 'OF'로 덮어 신청 표시가 사라진다.
     phase1_lockAbsences(state, engineWard, y, m);
+    phase0_initializePrevMonthCarryover(state, engineWard, y, m);
     phase2_placeNightKeepBlocks(state, engineWard, y, m);
     phase2b_seedMonthStartNights(state, engineWard, y, m);
     phase3a_placeChargeCoverage(state, engineWard, y, m);
