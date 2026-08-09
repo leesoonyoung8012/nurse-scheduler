@@ -68,3 +68,10 @@ node_modules/
 # dataconnect generated files
 .dataconnect
 .gstack/
+
+# 실명 포함 자료·배포 산출물 (커밋 금지)
+배포안내/
+*.png
+*.xlsx
+*.docx
+*.pdf

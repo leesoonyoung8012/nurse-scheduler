@@ -21,15 +21,27 @@
 
 ## ward 객체 (주요 필드)
 
-- `nurses[]`: `id`(형식 `n-<timestamp>`), `name`, `skillLevel`(LV1~5),
-  `skillTags`(["차지가능","프리셉터","교육담당"]), `workTypeIds`,
+- `nurses[]`: `id`(형식 `n-<timestamp>`), `name`,
+  `skillLevel`(구분: `HN`=수간호사/관리(인원 산정 제외) | `LV1`=신규 | `LV2`=주니어 | `LV3`=중간 | `LV4`=시니어 —
+  화면 표기는 신규/LV1 주니어/LV2 중간/LV3 시니어. 구 `LV5`는 시니어로 취급. 시니어=차지 커버.
+  `skillTags`는 2026-08-09 폐지 — 데이터는 남아 있으나 읽지 않음), `workTypeIds`, `team`,
   개인설정: `maxNightPerMonth`, `min/maxConsecutiveNight`, `maxConsecutiveDays`,
   `min/maxConsecutiveOff`, `employmentStatus`("active"|"leave"|"inactive")
 - `requests[]` / `leaveRequests[]`: `{nurseId, date:"YYYY-MM-DD", type:"WO"|"AL"|...}`
 - `schedulesByMonth`: 키 `"YYYY-MM"` → `{ "YYYY-MM-DD": { nurseId: code } }`
   ⚠️ 날짜 키만 있고 셀이 빈 달이 존재할 수 있음 (빈 달 ≠ 없는 달)
 - `staffingRules`: `{weekday|saturday|holiday: {D|E|N: {min,max}}}`
-- `nightRestDaysAfterBlock`: N 블록 후 회복 OFF 일수 (기본 2)
+- `seniorStaffing`: 병동별 교대당 시니어 최소/최대 `{D|E|N: {min,max}}` —
+  0 = 제한 없음, 노드 없으면 미적용(하위 호환). 시니어 판정 = `isNurseSeniorSupport`
+  (LV4+ 또는 차지가능/프리셉터/교육담당 태그). 소프트 규칙: 자동생성이 D/E만
+  교정(phase6d)하고 N은 경고로만 안내 (N 블록 단위 원칙).
+- `nightRestDaysAfterBlock`: N 블록 후 회복 OFF **최소** 일수 (병동별 1~2, 기본 2 — 하드 잠금).
+  대원칙(패턴 기반): 마지막 N 후 실제 OFF가 1개면 다음날 D 금지(E부터 가능)
+- `nightRestDaysAfterBlockMax`: N 블록 후 회복 OFF **최대** 일수 (0 = 제한 없음, 기본 0).
+  초과하지 않게 생성이 근무 복귀를 유도(소프트)하고 초과분은 경고로 표시
+- `teamPolicy`: 팀별 구성 모드 `{enabled:bool, minPerTeam:{팀:{D,E,N}}}` —
+  켜면 교대당 팀별 최소 인원을 보장(소프트)하고 레벨 균형 자동 교정(phase6d)은 꺼짐.
+  노드 없으면 미적용(하위 호환)
 - `leavePolicy`: 병동별 원티드 오프 신청 기준 (수간호사 휴가신청 탭에서 설정, 모바일 앱이 신청 시 적용)
   `{applyStart:"YYYY-MM-DD"|"", applyEnd:"YYYY-MM-DD"|"", maxPerDay:number|null, maxPerNurse:number|null, confirmFrom:number|null}`
   — null/빈문자열 = 제한 없음. `confirmFrom`개째부터 모바일 신청 차단(부서장 직접 등록 = 컨펌). 노드가 없으면 무제한(하위 호환).

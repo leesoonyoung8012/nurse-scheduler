@@ -493,7 +493,7 @@ function renderSchedule(){
   if(view.selDay){
     const d=view.selDay, code=myCode(y,m,d), row=sch[dkey(y,m,d)]||{};
     const others=s=>activeNurses(ward).filter(n=>n.id!==me.id&&up(row[n.id])===s).map(n=>esc(n.name));
-    const mates=['D','E','N'].map(s=>{
+    const mates=WORK.map(s=>{
       const list=others(s); if(!list.length) return '';
       return `<div class="detail-row"><div class="k">${s} 근무</div><div class="mates">${list.map(n=>`<span>${n}</span>`).join('')}</div></div>`;
     }).join('');
@@ -507,7 +507,7 @@ function renderSchedule(){
     ${filled?'':`<div class="msg info" style="margin-bottom:10px">아직 ${m}월 근무표가 저장되지 않았습니다.</div>`}
     ${grid}
     <div class="legend">
-      ${['D','E','N','OF','WO','AL'].map(c=>`<span class="sc-${c}">${c} ${CODE_NAME[c]}</span>`).join('')}
+      ${['D','E','N','MD','OF','WO','AL'].map(c=>`<span class="sc-${c}">${c} ${CODE_NAME[c]}</span>`).join('')}
     </div>
     ${detail}
     <div class="small muted" style="margin-top:10px">날짜를 누르면 그날의 내 근무와 함께 일하는 동료를 볼 수 있습니다.</div>`;
@@ -717,6 +717,7 @@ function renderStats(){
         <div class="stat"><div class="v">${counts.D||0}</div><div class="l">데이 D</div></div>
         <div class="stat"><div class="v">${counts.E||0}</div><div class="l">이브닝 E</div></div>
         <div class="stat"><div class="v">${counts.N||0}</div><div class="l">나이트 N</div></div>
+        ${counts.MD?`<div class="stat"><div class="v">${counts.MD}</div><div class="l">미드 MD</div></div>`:''}
         <div class="stat"><div class="v">${workDays}</div><div class="l">근무일 합계</div></div>
         <div class="stat"><div class="v">${offDays}</div><div class="l">오프 (WO 포함)</div></div>
         <div class="stat"><div class="v">${leaveDays}</div><div class="l">휴가·반차</div></div>
