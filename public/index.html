@@ -450,13 +450,27 @@ function nurseMobileEmail(empId,rev){
   return `${empId}${Number(rev||1)>1?`-r${Number(rev)}`:''}@${NURSE_MOBILE_EMAIL_DOMAIN}`;
 }
 
+/* 사번 매핑의 실제 주인을 찾는다.
+   매핑된 간호사가 명단에서 삭제됐거나 사번을 다른 값으로 바꿨다면 그 매핑은
+   "유령 매핑"(stale)이며, 그 사번은 다른 간호사에게 다시 넘길 수 있다. */
+function findNurseAccountOwner(empId){
+  const acct=(data.nurseAccounts||{})[empId];
+  if(!acct) return null;
+  const ward=(data.wards||[]).find(w=>w && (w.nurses||[]).some(x=>x && x.id===acct.nurseId));
+  const nurse=ward ? (ward.nurses||[]).find(x=>x && x.id===acct.nurseId) : null;
+  return { ward, nurse, stale: !nurse || String(nurse.employeeId||'').trim()!==String(empId) };
+}
+
 // wardId를 주면 관리자 모드: 초안 없이 즉시 저장되는 사번 입력 셀 (병동/계정 관리 탭)
 function nurseMobileAccountCell(n, wardId){
   const empId=String(n.employeeId||'').trim();
   const acct=empId ? (data.nurseAccounts||{})[empId] : null;
+  const owner=(acct && acct.nurseId!==n.id) ? findNurseAccountOwner(empId) : null;
   const status=!empId ? '' :
     !acct ? '<div class="small muted" style="margin-top:4px">계정 미생성</div>' :
-    acct.nurseId!==n.id ? '<div class="small" style="margin-top:4px;color:#b91c1c">다른 간호사와 연결됨</div>' :
+    owner ? (owner.stale
+      ? `<div class="small" style="margin-top:4px;color:#92400e">옛 계정 기록 남음 (${owner.nurse?escapeHtml(owner.nurse.name||''):'삭제된 간호사'}) — 계정 생성 시 덮어씁니다</div>`
+      : `<div class="small" style="margin-top:4px;color:#b91c1c">다른 간호사와 연결됨: ${escapeHtml(owner.nurse.name||'')}</div>`) :
     acct.mustChangePw ? '<div class="small" style="margin-top:4px;color:#92400e">초기비번 상태 (첫 로그인 시 변경)</div>' :
     '<div class="small ok" style="margin-top:4px">사용 중</div>';
   const btnStyle='style="margin-top:5px;font-size:12px;padding:5px 10px;min-height:30px"';
@@ -532,9 +546,18 @@ async function createNurseMobileAccount(nurseId, wardId){
   const empId=String(src.employeeId||'').trim();
   if(!/^[A-Za-z0-9][A-Za-z0-9._-]{2,29}$/.test(empId)){ alert('사번을 3~30자 영문/숫자로 먼저 입력하고 저장하세요.'); return; }
 
-  // 같은 사번이 다른 간호사에 연결돼 있으면 차단
-  const acct=(data.nurseAccounts||{})[empId];
-  if(acct && acct.nurseId && acct.nurseId!==nurseId){ alert(`사번 ${empId}는 이미 다른 간호사의 계정에 연결되어 있습니다.`); return; }
+  // 같은 사번이 다른 간호사에 연결돼 있으면 차단.
+  // 단 그 간호사가 삭제됐거나 이미 다른 사번을 쓰고 있으면(유령 매핑) 확인 후 넘겨받는다.
+  const owner=findNurseAccountOwner(empId);
+  if(owner && !owner.stale && owner.nurse.id!==nurseId){
+    alert(`사번 ${empId}는 이미 ${owner.ward.name||''} ${owner.nurse.name||''} 간호사의 계정에 연결되어 있습니다.`); return;
+  }
+  if(owner && owner.stale && (!owner.nurse || owner.nurse.id!==nurseId)){
+    const who=owner.nurse
+      ? `${owner.ward.name||''} ${owner.nurse.name||''} 간호사(현재 사번 ${String(owner.nurse.employeeId||'').trim()||'없음'})`
+      : '명단에서 삭제된 간호사';
+    if(!confirm(`사번 ${empId}에는 ${who}의 옛 계정 기록이 남아 있습니다.\n${src.name||''} 간호사에게 이 사번을 넘기고 기록을 덮어쓸까요?\n(이후 이 사번으로는 ${src.name||''} 간호사로만 로그인됩니다)`)) return;
+  }
 
   if(!confirm(`${src.name||''} (사번 ${empId}) 모바일 계정을 만들까요?\n초기 비밀번호는 전 병동 공통 "${NURSE_MOBILE_INIT_PW}" 이며, 첫 로그인 시 본인이 변경합니다.`)) return;
 
@@ -551,6 +574,10 @@ async function createNurseMobileAccount(nurseId, wardId){
     else { console.error(e); alert('계정 생성 실패: '+(e.message||code||'알 수 없는 오류')); return; }
   }
 
+  // 이 간호사에게 남아 있던 옛 사번 매핑 제거 (사번 변경 시 유령 매핑·이중 로그인 방지)
+  Object.keys(data.nurseAccounts).forEach(k=>{
+    if(k!==empId && data.nurseAccounts[k] && data.nurseAccounts[k].nurseId===nurseId) delete data.nurseAccounts[k];
+  });
   data.nurseAccounts[empId]={ wardId:ward.id, nurseId, authRev:1, mustChangePw:true, createdAt:new Date().toISOString() };
   if(nurse) nurse.employeeId=empId;
   if(draftRow) draftRow.employeeId=empId;
@@ -1679,14 +1706,17 @@ function getStaffingMaxForDate(ward,y,m,d,shift){
   const v=Number(rules?.[shift]?.max ?? 0);
   return v>0 ? v : Infinity;
 }
-/* ── 시니어 배치 기준 (병동별 · 소프트 규칙) ─────────────────────
+/* ── 시니어 배치 기준 (병동별) ───────────────────────────────────
    ward.seniorStaffing = { D:{min,max}, E:{min,max}, N:{min,max} }
-   0 = 제한 없음. 시니어 판정은 isNurseSeniorSupport (LV4+ 또는 태그). */
+   최소는 하한 1 고정 — 듀티 책임 커버는 시니어(LV3)만 가능하므로
+   모든 교대에 최소 1명이 반드시 있어야 한다(하드 규칙). 병동은 2 이상으로만 올릴 수 있다.
+   최대는 0 = 제한 없음 (시니어 몰림 방지용, 소프트).
+   시니어 판정은 isNurseSeniorSupport. */
 function getSeniorStaffingForShift(ward, shift){
   const s = ward && ward.seniorStaffing ? ward.seniorStaffing[String(shift||'').toUpperCase()] : null;
   const min = Number(s?.min ?? 0);
   const max = Number(s?.max ?? 0);
-  return { min: min>0 ? min : 0, max: max>0 ? max : Infinity };
+  return { min: min>1 ? min : 1, max: max>0 ? max : Infinity };
 }
 /* ── 팀별 구성 모드 (병동별 · 소프트 규칙) ───────────────────────
    ward.teamPolicy = { enabled: bool, minPerTeam: { 팀: {D,E,N} } }
@@ -4533,48 +4563,30 @@ function collectSkillMixIssues(schedule,nurses,y,m,ward){
   const issues=[];
   const active=(nurses||[]).filter(n=>n && n.employmentStatus!=='leave' && n.employmentStatus!=='inactive');
   const last=daysInMonth(y,m);
-  const enforceNightSenior=shouldEnforceSeniorSupportForShift(active,'N');
-  let hasNightAssignment=false;
   for(let d=1; d<=last; d++){
     const key=makeDateKey(y,m,d);
     ['D','E','N'].forEach(shift=>{
       const assigned=active.filter(n=>String(schedule[key]?.[n.id]||'').toUpperCase()===shift);
       if(!assigned.length) return;
-      if(shift==='N') hasNightAssignment=true;
-      // D/E 책임자 배치는 운영상 참고사항이지만 하드 오류로 두면
-      // 최소인원/OFF 보정 자체가 멈춥니다. 불변 조건은 N 안전조합에 집중합니다.
-      if(shift!=='N') return;
       const hasSenior=assigned.some(n=>isNurseSeniorSupport(n));
       // 태그 폐지 후: "가르칠 사람" = 해당 신규의 지정 프리셉터가 같은 교대에 있는지로 판정
       const traineePreceptorIds=new Set(assigned.filter(n=>getNurseSkillRank(n)===1)
         .map(t=>String(findPreceptorForTrainee(active,t)?.id||'')).filter(Boolean));
       const hasPreceptor=assigned.some(n=>traineePreceptorIds.has(String(n.id)));
       const hasNew=assigned.some(n=>getNurseSkillRank(n)===1);
-      const hasJunior=assigned.some(n=>isJuniorGradeNurse(n));
       const juniorOnly=assigned.length>=2 && assigned.every(n=>isJuniorGradeNurse(n)||isHeadNurseExcluded(n)) && assigned.some(n=>isJuniorGradeNurse(n));
-      if(shift==='N' && !enforceNightSenior){
-        if(hasNew){
-          issues.push(`${key} N 신규 교육조합 확인: 병동 근무자 명단에 시니어(LV3) 구분 인원이 아직 없음`);
-        }
-        return;
+      // 듀티 책임 커버는 시니어(LV3)만 가능 — 배정자가 있는 D/E/N 모든 교대에 1명 이상 필수
+      if(!hasSenior){
+        issues.push(`${key} ${shift} 듀티 책임자 없음: 시니어(LV3) 0명 (${assigned.length}명 중)`);
       }
       if(juniorOnly){
         issues.push(`${key} ${shift} 위험조합: 신규/주니어끼리만 배치됨`);
         return;
       }
-      if(hasJunior && !hasSenior){
-        issues.push(`${key} ${shift} 위험조합: 주니어가 시니어(LV3) 없이 배치됨`);
-      }
       if(hasNew && !hasSenior && !hasPreceptor){
         issues.push(`${key} ${shift} 신규 교육조합 확인: 신규 근무에 시니어 또는 지정 프리셉터가 없음`);
       }
-      if(assigned.length>=2 && !hasSenior){
-        issues.push(`${key} ${shift} 책임자 확인: 시니어(LV3) 인원이 없음`);
-      }
     });
-  }
-  if(hasNightAssignment && !enforceNightSenior){
-    issues.unshift('N 안전조합 참고: 이 병동은 시니어(LV3) 구분 인원이 없어 3단계 N 시니어 포함 조건을 경고로만 적용했습니다. 근무자 명단에서 구분을 시니어로 입력하면 자동으로 하드 점검됩니다.');
   }
   return [...new Set(issues)];
 }
@@ -5617,8 +5629,9 @@ function updateWardSeniorStaffing(shift,key,val){
   const ward=getCurrentWard();
   if(!ward) return;
   if(!ward.seniorStaffing||typeof ward.seniorStaffing!=='object') ward.seniorStaffing={};
-  if(!ward.seniorStaffing[shift]) ward.seniorStaffing[shift]={min:0,max:0};
-  ward.seniorStaffing[shift][key]=Math.max(0,Number(val||0));
+  if(!ward.seniorStaffing[shift]) ward.seniorStaffing[shift]={min:1,max:0};
+  // 최소는 1 미만으로 못 내린다 — 교대당 시니어 1명은 하드 규칙이라 0을 허용하면 화면과 동작이 어긋난다.
+  ward.seniorStaffing[shift][key]=key==='min' ? Math.max(1,Number(val||0)) : Math.max(0,Number(val||0));
   saveData(true);
 }
 
@@ -6227,15 +6240,15 @@ function renderWardNurses(){
             <div class="small muted" style="padding:10px 16px">최소 = N 묶음 후 반드시 잠그는 보호 OFF 개수(하드 규칙). 최대 = N 후 OFF가 이 개수를 넘지 않게 생성이 근무 복귀를 유도하고 초과 시 경고합니다(0 = 제한 없음).<br>대원칙: 마지막 N 후 OFF가 <strong>1개</strong>면 다음날 <strong>D 배치 금지</strong>(E부터 가능), <strong>2개</strong> 이상이면 다음날 D도 가능합니다.</div>
           </div>
           <div class="staffing-card">
-            <div class="staffing-card-title">시니어 배치 기준 <span class="small muted">(0 = 제한 없음)</span></div>
+            <div class="staffing-card-title">시니어 배치 기준 <span class="small muted">(최소 = 하한 1 · 최대 0 = 제한 없음)</span></div>
             <div class="staffing-row" style="font-size:12px;color:#64748b;font-weight:700"><div>근무</div><div>최소</div><div>최대</div></div>
             ${['D','E','N'].map(shift=>`
             <div class="staffing-row">
               <div class="staffing-shift">${shiftName[shift]}</div>
-              <label class="mini-field"><span>최소</span><input type="number" min="0" value="${ward.seniorStaffing?.[shift]?.min ?? 0}" onchange="updateWardSeniorStaffing('${shift}','min',this.value)"></label>
+              <label class="mini-field"><span>최소</span><input type="number" min="1" value="${getSeniorStaffingForShift(ward,shift).min}" onchange="updateWardSeniorStaffing('${shift}','min',this.value)"></label>
               <label class="mini-field"><span>최대</span><input type="number" min="0" value="${ward.seniorStaffing?.[shift]?.max ?? 0}" onchange="updateWardSeniorStaffing('${shift}','max',this.value)"></label>
             </div>`).join('')}
-            <div class="small muted" style="padding:10px 16px">시니어 = 구분이 "LV3 시니어"인 근무자(수간호사/관리 제외). 시니어 몰림/주니어 편중을 이 범위로 교정합니다(소프트 — 불가 시 경고). N은 경고로만 안내.</div>
+            <div class="small muted" style="padding:10px 16px">시니어 = 구분이 "LV3 시니어"인 근무자(수간호사/관리 제외). <strong>듀티 책임 커버는 시니어만 가능하므로 D·E·N 모든 교대에 최소 1명이 반드시 배치됩니다(하드 규칙, 최소값을 0으로 내릴 수 없음).</strong> 2명 이상 필요하면 최소값을 올리세요. 최대는 시니어 몰림 방지용입니다.</div>
           </div>
           <div class="staffing-card">
             <div class="staffing-card-title">팀별 구성 사용 여부</div>
@@ -6733,12 +6746,9 @@ function collectAbsoluteScheduleViolations(schedule, ward, y, m){
       if(assigned.length && !assigned.some(n=>getNurseSkillRank(n)>=3)){
         add('skillMix',`${key} ${shift} 주니어만 배치됨: 중간(LV2) 이상 없이 배치`,{date:key,day:d,shift});
       }
-      if(shift==='N'){
-        const hasJunior=assigned.some(n=>isJuniorGradeNurse(n) || isUnifiedNewNurse(n));
-        const hasSeniorSupport=assigned.some(n=>isNurseSeniorSupport(n));
-        if(hasJunior && !hasSeniorSupport){
-          add('nightSkillMix',`${key} N 위험조합: 주니어가 시니어(LV3)/차지/프리셉터/교육담당 없이 배치됨`,{date:key,day:d,shift});
-        }
+      // 듀티 책임 커버: 배정자가 있는 D/E/N 모든 교대에 시니어(LV3) 1명 이상 필수
+      if(assigned.length && !assigned.some(n=>isNurseSeniorSupport(n))){
+        add('seniorPresence',`${key} ${shift} 듀티 책임자 없음: 시니어(LV3) 0명 (${assigned.length}명 중)`,{date:key,day:d,shift});
       }
     });
     nurses.forEach(n=>{
@@ -6759,9 +6769,8 @@ function collectAbsoluteScheduleViolations(schedule, ward, y, m){
 
     const blocks=absoluteNightBlocksForNurse(schedule,ward,n,y,m);
     const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-    const minBlock=stepIsNightKeep(n) ? 1 : 2;
+    // 1개짜리 N 블록은 위반이 아니다 — 개인조건 '연속 N 최소'가 판단 기준이므로 여기서 경고하지 않는다.
     blocks.forEach(b=>{
-      if(b.len<minBlock) add('nightSingleBlock',`${makeDateKey(y,m,b.start)} ${n.name} 단독 1N 사이클 금지`,{day:b.start,nurseId:n.id});
       if(maxNs>0 && b.len>maxNs) add('nightBlockMax',`${makeDateKey(y,m,b.start)} ${n.name} 연속 N 최대 초과 (${b.len}/${maxNs})`,{day:b.start,nurseId:n.id});
       const need=absoluteRequiredNightOff(n,ward);
       for(let x=b.end+1; x<=Math.min(last,b.end+need); x++){
@@ -6890,10 +6899,10 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
       const rem=getPreviousMonthNightRecoveryRemaining(ward,n.id,y,m,required);
       for(let d=1; d<=Math.min(last,rem); d++) changed += removeWork(n,d,'전월 N후 2OFF')?1:0;
       const maxNs=getNurseNumberSetting(n,'maxConsecutiveNight',data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3);
-      const minBlock=stepIsNightKeep(n) ? 1 : 2;
+      // 1개짜리 N 블록은 하드로 지우지 않는다 — 개인조건 '연속 N 최소'를 1로 둘 수 있어
+      // 무조건 2를 강제하면 그 설정과 상충한다. 2사이클 원칙은 소프트(생성 선호)로만 유지한다.
       let blocks=absoluteNightBlocksForNurse(schedule,ward,n,y,m);
       blocks.forEach(b=>{
-        if(b.len<minBlock){ for(let d=b.start; d<=b.end; d++) changed += removeWork(n,d,'단독 1N 사이클 금지')?1:0; }
         if(maxNs>0 && b.len>maxNs){ for(let d=b.start+maxNs; d<=b.end; d++) changed += removeWork(n,d,'연속 N 최대 초과')?1:0; }
       });
       blocks=absoluteNightBlocksForNurse(schedule,ward,n,y,m);
@@ -6938,18 +6947,16 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
     let changed=0;
     for(let d=1; d<=last; d++){
       ['D','E','N'].forEach(shift=>{
+        // 대원칙 7조: 모든 듀티에 시니어(LV3) 1명 이상. 없으면 그 듀티 배정을 전부 제거한다.
+        // 시니어는 중간(LV2) 이상이므로 옛 '주니어만 배치 금지'는 이 검사에 흡수된다.
         let assigned=nurses.filter(n=>code(n,d)===shift);
-        if(assigned.length && !assigned.some(n=>getNurseSkillRank(n)>=3)){
-          assigned.forEach(n=>{ changed += removeWork(n,d,`${shift} 주니어만 배치`)?1:0; });
+        if(assigned.length && !assigned.some(n=>isNurseSeniorSupport(n))){
+          // 왜 비웠는지 함께 남긴다 — 수간호사가 그날 시니어 상황을 보고 수동 배치할 수 있도록.
+          const seniorState=nurses.filter(n=>isNurseSeniorSupport(n))
+            .map(n=>`${n.name} ${code(n,d)||'빈칸'}`).join(' · ');
+          details.push(`${makeDateKey(y,m,d)} ${shift} — 시니어(LV3)를 배치할 수 없어 ${assigned.length}명 배정을 비웠습니다. 수동 배치가 필요합니다. [그날 시니어 상황: ${seniorState||'등록된 시니어 없음'}]`);
+          assigned.forEach(n=>{ changed += removeWork(n,d,`${shift} 듀티 책임자(시니어) 없음`)?1:0; });
           assigned=[];
-        }
-        if(shift==='N'){
-          assigned=nurses.filter(n=>code(n,d)===shift);
-          const hasJunior=assigned.some(n=>isJuniorGradeNurse(n) || isUnifiedNewNurse(n));
-          const hasSeniorSupport=assigned.some(n=>isNurseSeniorSupport(n));
-          if(hasJunior && !hasSeniorSupport){
-            assigned.filter(n=>isJuniorGradeNurse(n) || isUnifiedNewNurse(n)).forEach(n=>{ changed += removeWork(n,d,'N 주니어 안전조합 위반')?1:0; });
-          }
         }
         const max=getStaffingMaxForDate(ward,y,m,d,shift);
         assigned=nurses.filter(n=>code(n,d)===shift);
@@ -6976,7 +6983,8 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
     if(!changed) break;
   }
   const unresolved=collectAbsoluteScheduleViolations(schedule,ward,y,m).map(x=>x.message);
-  const result={removed,fixed,details:[...new Set(details)],issues:unresolved,unresolved};
+  // reportOnly는 화면 표기를 가른다: 자동생성은 "삭제함", 수동 편집 저장은 "의심(그대로 저장)".
+  const result={removed,fixed,details:[...new Set(details)],issues:unresolved,unresolved,reportOnly};
   try{
     if(stepGenerationState) stepGenerationState.finalValidation=result;
     if(typeof resultCache==='object' && resultCache) resultCache.finalValidation=result;
@@ -11975,10 +11983,35 @@ function renderGenerateSummary(){
   // N 균등 분배는 나이트킵/개인별 상한/최소인원 보정 때문에 차이가 날 수 있어 하드 경고로 표시하지 않습니다.
   const unique=[...new Set(issues)];
   const offIssues=[...new Set(collectMonthlyOffBalanceIssues(schedule, ward, uiYear, uiMonth))];
-  if(unique.length===0 && offIssues.length===0) return `<div class="ok" style="margin-top:8px">근무인원 부족, 배치제한 위반, 신규/주니어 위험조합 없음 · 월 기준OFF 균형 및 전월 마지막 OFF 이후 연속흐름 포함 점검 완료</div>`;
+  const removalHtml=renderAbsoluteRemovalPanel();
+  if(unique.length===0 && offIssues.length===0) return `${removalHtml}<div class="ok" style="margin-top:8px">근무인원 부족, 배치제한 위반, 신규/주니어 위험조합 없음 · 월 기준OFF 균형 및 전월 마지막 OFF 이후 연속흐름 포함 점검 완료</div>`;
   const hardHtml=unique.map(w=>`<div class="alert" style="margin-top:8px">${w}</div>`).join('');
   const offHtml=offIssues.map(w=>`<div class="alert" style="margin-top:8px">${w}</div>`).join('');
-  return `<div><div class="alert" style="margin-top:8px"><strong>${unique.length?'근무표 확인 필요':'OFF 균형 확인 필요'}</strong></div>${hardHtml}${offHtml}</div>`;
+  return `<div>${removalHtml}<div class="alert" style="margin-top:8px"><strong>${unique.length?'근무표 확인 필요':'OFF 균형 확인 필요'}</strong></div>${hardHtml}${offHtml}</div>`;
+}
+
+/* ── 절대검증기가 지운(또는 지웠어야 할) 배치를 사유와 함께 보여준다 ──
+   대원칙: 자동생성은 위반 셀을 삭제하고 그 이유를 알린다.
+   수동 편집 저장은 대원칙을 강제하지 않으므로(reportOnly) "의심"으로 표기하고
+   근무표는 건드리지 않았음을 분명히 한다. */
+function renderAbsoluteRemovalPanel(){
+  const fv=(typeof resultCache==='object' && resultCache && resultCache.finalValidation)
+    || (typeof stepGenerationState==='object' && stepGenerationState && stepGenerationState.finalValidation)
+    || null;
+  if(!fv || !Array.isArray(fv.details) || !fv.details.length) return '';
+  const reportOnly=!!fv.reportOnly;
+  const title=reportOnly
+    ? `대원칙 위반 의심 ${fv.details.length}건 — 근무표는 그대로 저장되었습니다`
+    : `대원칙 위반으로 삭제된 배치 ${fv.details.length}건`;
+  const note=reportOnly
+    ? '손으로 수정한 근무표에는 대원칙을 강제하지 않습니다. 아래 항목을 직접 확인해 주세요.'
+    : '아래 배치는 대원칙에 어긋나 OFF로 바뀌었습니다.';
+  const rows=fv.details.map(x=>`<div style="padding:3px 0">${escapeHtml(x)}</div>`).join('');
+  return `<details style="margin-top:8px;border:1px solid #f0c9a0;background:#fff8f0;border-radius:12px;padding:12px 14px">
+    <summary style="cursor:pointer;font-weight:700;color:#9a3412">${escapeHtml(title)}</summary>
+    <div class="small muted" style="margin:8px 0 6px">${escapeHtml(note)}</div>
+    <div class="small" style="max-height:260px;overflow:auto;font-variant-numeric:tabular-nums">${rows}</div>
+  </details>`;
 }
 
 function renderScheduleTable(ward,schedule,stats,editable=false){
@@ -12487,7 +12520,8 @@ function isOfficeDayNurse(nurse) {
      4. WO/휴가 요청   5. N→D/E 전이금지  6. E→D 전이금지
      7. 연속근무 최대  8. N 월 최대       9. 연속 N 최대
 ─────────────────────────────────────────────────────────────── */
-function canAssign(nurse, day, shift, state, ward, y, m) {
+// opts.allowSeniorGap: 교대당 시니어 최소 인원 게이트만 해제 (phase6f 되메우기 전용)
+function canAssign(nurse, day, shift, state, ward, y, m, opts = {}) {
   const S          = String(shift || '').toUpperCase();
   const WORK_CODES = ['D', 'E', 'N', 'MD', 'SD6'];
   const OFF_CODES  = ['O', 'OF', 'AL', 'SL', 'WO', 'HA', 'HP'];
@@ -12610,6 +12644,47 @@ function canAssign(nurse, day, shift, state, ward, y, m) {
     if (nStreak + 1 + fwdNStreak > maxConsecN) return false;
   }
 
+  // 9b. N 재진입 텀 (대원칙 4조) — 이전 N 묶음이 끝난 뒤 최소 간격을 둔다.
+  //     검증기(repairNightRules)가 같은 규칙으로 셀을 지우므로, 엔진이 애초에 만들지 않아야
+  //     생성 직후 나이트가 통째로 삭제되는 일이 없다. 묶음 확장(전날이 N)은 연속 N 규칙이 담당.
+  if (S === 'N' && prev1 !== 'N') {
+    const reGap = typeof stepNightReentryGapDays === 'function' ? stepNightReentryGapDays(nurse) : 0;
+    if (reGap > 0) {
+      let prevNightEnd = null;
+      for (let d = day - 1; d >= 1; d--) {
+        if (state.get(nurse.id, d) === 'N') { prevNightEnd = d; break; }
+      }
+      if (prevNightEnd === null) {
+        const off = getPreviousMonthLastNightOffset(ward, nurse.id, y, m);
+        if (off !== -999) prevNightEnd = off; // 전월 말일은 0, 그 전날은 -1
+      }
+      if (prevNightEnd !== null && (day - prevNightEnd) <= reGap) return false;
+    }
+  }
+
+  // 10. 교대당 시니어(LV3) 최소 인원 — 듀티 책임 커버 (하드)
+  //     책임 업무는 시니어만 커버할 수 있으므로 D/E/N 모든 교대에 기준 인원을 채운다.
+  //     시니어 몫이 남아 있는 동안에는 비(非)시니어가 그 자리를 먼저 가져가지 못하게 막는다.
+  //     단 그날 그 교대에 더 넣을 수 있는 시니어가 아무도 없으면, 빈칸을 만들지 않도록
+  //     통과시키고 getViolations의 SENIOR_PRESENCE(ERROR)로 넘긴다.
+  if (!opts.allowSeniorGap && ['D', 'E', 'N'].includes(S) && !isNurseSeniorSupport(nurse)) {
+    const active = (ward.nurses || []).filter(n =>
+      n.employmentStatus !== 'leave' && n.employmentStatus !== 'inactive'
+    );
+    const onShift   = active.filter(n => n.id !== nurse.id && state.get(n.id, day) === S);
+    const seniorMin = getSeniorStaffingForShift(ward, S).min;
+    const seniorOn  = onShift.filter(isNurseSeniorSupport).length;
+    const staffMin  = Math.max(seniorMin, getStaffingMinForDate(ward, y, m, day, S));
+    if (seniorOn < seniorMin && onShift.length + 1 + (seniorMin - seniorOn) > staffMin) {
+      const seniorFree = active.some(n =>
+        isNurseSeniorSupport(n) &&
+        state.get(n.id, day) !== S &&
+        canAssign(n, day, S, state, ward, y, m)
+      );
+      if (seniorFree) return false;
+    }
+  }
+
   return true;
 }
 
@@ -12704,7 +12779,7 @@ function scoreAssignment(nurse, day, shift, state, ward, y, m) {
    반환: { errors[], shortages[], warnings[] }
 ─────────────────────────────────────────────────────────────── */
 function getViolations(state, ward, y, m) {
-  const errors    = [];  // canAssign()이 막았어야 할 절대규칙 위반 (프로그램 버그)
+  const errors    = [];  // 하드 규칙 위반 — 전이/연속 위반은 프로그램 버그, 듀티 책임자 없음은 시니어 부족(수동 조정)
   const shortages = [];  // 가능 인원 없어 발생한 인력 부족 (수간호사 수동처리)
   const warnings  = [];  // 소프트 규칙 미충족 (참고 정보)
 
@@ -12732,14 +12807,14 @@ function getViolations(state, ward, y, m) {
         });
       }
 
-      // 차지가능자 없음 → SHORTAGE (배정자가 있는 교대만 체크)
-      if (onShift.length > 0 && !onShift.some(isChargeCapable)) {
-        shortages.push({
-          severity: 'SHORTAGE',
-          rule: 'CHARGE_PRESENCE',
+      // 듀티 책임 커버(하드): 시니어(LV3) 없음 → ERROR (배정자가 있는 교대만 체크)
+      if (onShift.length > 0 && !onShift.some(isNurseSeniorSupport)) {
+        errors.push({
+          severity: 'ERROR',
+          rule: 'SENIOR_PRESENCE',
           date: dateKey,
           shift,
-          msg: `${dateKey} ${shift} 차지가능자 없음 (${onShift.length}명 중)`,
+          msg: `${dateKey} ${shift} 듀티 책임자 없음 — 시니어(LV3) 0명 (${onShift.length}명 중), 수동 조정 필요`,
         });
       }
 
@@ -12777,11 +12852,12 @@ function getViolations(state, ward, y, m) {
         });
       }
 
-      // 병동별 시니어 배치 기준 (소프트) → WARNING
+      // 병동이 시니어 2명 이상을 요구할 때의 부족분·몰림 (소프트) → WARNING
+      // 0명은 위 SENIOR_PRESENCE(ERROR)가 이미 알리므로 중복 보고하지 않는다.
       const seniorPol = getSeniorStaffingForShift(ward, shift);
-      if (onShift.length > 0 && (seniorPol.min > 0 || seniorPol.max !== Infinity)) {
+      if (onShift.length > 0) {
         const seniorCnt = onShift.filter(isNurseSeniorSupport).length;
-        if (seniorCnt < seniorPol.min) {
+        if (seniorCnt > 0 && seniorCnt < seniorPol.min) {
           warnings.push({ severity: 'WARNING', rule: 'SENIOR_MIX_MIN', date: dateKey, shift,
             msg: `${dateKey} ${shift} 시니어 ${seniorCnt}명 — 병동 기준 최소 ${seniorPol.min}명 미달 (수동 조정 참고)` });
         } else if (seniorCnt > seniorPol.max) {
@@ -13992,8 +14068,9 @@ function phase6_limitedBalanceWithSimulation(state, ward, y, m) {
   const MAX_ROUNDS = 5;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const { shortages } = getViolations(state, ward, y, m);
-    if (!shortages.length) break;
+    const { errors, shortages } = getViolations(state, ward, y, m);
+    const seniorGaps = errors.filter(x => x.rule === 'SENIOR_PRESENCE');
+    if (!shortages.length && !seniorGaps.length) break;
     let improved = false;
 
     // Pass 1: D/E 최소인원 채우기 (N은 블록 제약상 제외)
@@ -14002,8 +14079,8 @@ function phase6_limitedBalanceWithSimulation(state, ward, y, m) {
       if (_p6_fixMinStaffing(nurses, day, s.shift, state, ward, y, m)) improved = true;
     }
 
-    // Pass 2: D/E/N 차지가능자 확보
-    for (const s of shortages.filter(x => x.rule === 'CHARGE_PRESENCE')) {
+    // Pass 2: D/E/N 듀티 책임자(시니어) 확보
+    for (const s of seniorGaps) {
       const day = Number(String(s.date).slice(-2));
       if (_p6_fixChargePresence(nurses, day, s.shift, state, ward, y, m)) improved = true;
     }
@@ -14186,41 +14263,56 @@ function phase6c_ensureSkillMix(state, ward, y, m) {
     n.employmentStatus !== 'leave' && n.employmentStatus !== 'inactive'
   );
 
+  // 조건에 맞는 인원을 해당 교대로 1명 충원 (없으면 false)
+  const recruit = (day, shift, match, reason, checkForward) => {
+    const candidates = nurses.filter(n =>
+      match(n) &&
+      state.get(n.id, day) !== shift &&
+      _p6_canRecruit(n, day, state) &&
+      canAssign(n, day, shift, state, ward, y, m) &&
+      (!checkForward || _p6_noForwardViolation(n, day, shift, state, last))
+    ).sort((a, b) =>
+      scoreAssignment(b, day, shift, state, ward, y, m) -
+      scoreAssignment(a, day, shift, state, ward, y, m)
+    );
+    if (!candidates.length) return false;
+    _p6_reassign(candidates[0], day, shift, state, reason);
+    return true;
+  };
+
   for (let day = 1; day <= last; day++) {
     for (const shift of ['D', 'E']) {
-      const onShift = nurses.filter(n => state.get(n.id, day) === shift);
-      if (!onShift.length || onShift.some(n => getNurseSkillRank(n) >= 3)) continue;
+      const onShift = () => nurses.filter(n => state.get(n.id, day) === shift);
+      if (!onShift().length) continue;
 
-      const candidates = nurses.filter(n =>
-        getNurseSkillRank(n) >= 3 &&
-        state.get(n.id, day) !== shift &&
-        _p6_canRecruit(n, day, state) &&
-        canAssign(n, day, shift, state, ward, y, m)
-      ).sort((a, b) =>
-        scoreAssignment(b, day, shift, state, ward, y, m) -
-        scoreAssignment(a, day, shift, state, ward, y, m)
-      );
-      if (candidates.length) {
-        _p6_reassign(candidates[0], day, shift, state, 'phase6c_skillMix');
+      // ① Rule 8: 주니어만 배치된 교대에 중간(LV2) 이상 충원
+      if (!onShift().some(n => getNurseSkillRank(n) >= 3)) {
+        recruit(day, shift, n => getNurseSkillRank(n) >= 3, 'phase6c_skillMix');
+      }
+
+      // ② 듀티 책임 커버(하드): 교대당 시니어(LV3) 최소 인원 충원.
+      //    팀 모드에서도 반드시 돌아야 하므로 phase6d가 아니라 여기서 처리한다.
+      const seniorMin = getSeniorStaffingForShift(ward, shift).min;
+      let guard = 0;
+      while (onShift().filter(isNurseSeniorSupport).length < seniorMin && guard++ < 10) {
+        if (!recruit(day, shift, isNurseSeniorSupport, 'phase6c_seniorMin', true)) break;
       }
     }
   }
 }
 
-/* ── Phase 6d: 병동별 시니어 배치 기준 교정 (소프트) ─────────────
-   시니어(=isNurseSeniorSupport: LV4+ 또는 차지가능/프리셉터/교육담당)가
-   특정 날에 몰리거나 부족한 교대를 ward.seniorStaffing 범위로 교정한다.
-   - 부족: OF/빈칸의 시니어를 충원 (phase6c 패턴)
-   - 초과: 잉여 시니어를 OF로 빼고 주니어로 대체 (스냅샷 롤백)
+/* ── Phase 6d: 시니어 몰림 교정 (소프트) ────────────────────────
+   시니어(=isNurseSeniorSupport)가 특정 날 한 교대에 몰린 것을
+   ward.seniorStaffing.max 범위로 되돌린다: 잉여 시니어를 OF로 빼고
+   주니어로 대체 (스냅샷 롤백).
+   시니어 최소 인원 충원은 하드 규칙이라 phase6c가 맡는다 (팀 모드에서도 실행).
    D/E만 교정한다 — N은 블록 단위 배정 원칙상 낱개 조작 금지, 경고로만 안내.
    지킬 수 없는 날은 그대로 두고 getViolations 경고에 맡긴다.
 ─────────────────────────────────────────────────────────────── */
 function phase6d_balanceSeniorMix(state, ward, y, m) {
   if (isTeamModeEnabled(ward)) return; // 팀 모드: 레벨 균형 자동 교정 끔 (경고는 getViolations가 유지)
-  const shifts = ['D', 'E'].filter(s => {
-    const p = getSeniorStaffingForShift(ward, s);
-    return p.min > 0 || p.max !== Infinity;
-  });
+  // 최소 충원은 phase6c(하드)가 맡는다. 여기서는 시니어 몰림(최대 초과)만 교정한다.
+  const shifts = ['D', 'E'].filter(s => getSeniorStaffingForShift(ward, s).max !== Infinity);
   if (!shifts.length) return;
 
   const last   = daysInMonth(y, m);
@@ -14241,25 +14333,8 @@ function phase6d_balanceSeniorMix(state, ward, y, m) {
       const onShift = () => nurses.filter(n => state.get(n.id, day) === shift);
       const seniorsOn = () => onShift().filter(isNurseSeniorSupport);
 
-      // ① 부족: 시니어 충원 (근무 인원이 늘어나는 교정 — phase6c와 동일 패턴)
+      // 초과: 잉여 시니어 → OF, 주니어 충원으로 인원수 유지
       let guard = 0;
-      while (seniorsOn().length < pol.min && guard++ < 10) {
-        const cands = nurses.filter(n =>
-          isNurseSeniorSupport(n) &&
-          state.get(n.id, day) !== shift &&
-          _p6_canRecruit(n, day, state) &&
-          canAssign(n, day, shift, state, ward, y, m) &&
-          _p6_noForwardViolation(n, day, shift, state, last)
-        ).sort((a, b) =>
-          scoreAssignment(b, day, shift, state, ward, y, m) -
-          scoreAssignment(a, day, shift, state, ward, y, m)
-        );
-        if (!cands.length) break;
-        _p6_reassign(cands[0], day, shift, state, 'phase6d_seniorMin');
-      }
-
-      // ② 초과: 잉여 시니어 → OF, 주니어 충원으로 인원수 유지
-      guard = 0;
       while (seniorsOn().length > pol.max && guard++ < 10) {
         const before       = onShift();
         const hadCharge    = before.some(isChargeCapable);
@@ -14276,10 +14351,11 @@ function phase6d_balanceSeniorMix(state, ward, y, m) {
         if (!removable.length || !juniorCands.length) break;
 
         const junior = juniorCands[0];
-        // 빼도 안전한 시니어: 차지 커버·LV3+(Rule 8) 유지가 가능한 사람만.
+        // 빼도 안전한 시니어: 듀티 책임 커버(시니어 최소)·차지 커버·LV3+(Rule 8) 유지가 가능한 사람만.
         // 이번 달 근무가 많은 시니어부터 OF로 (공평 배분)
         const safeOut = removable.filter(sn => {
           const rest = before.filter(n => n.id !== sn.id).concat([junior]);
+          if (rest.filter(isNurseSeniorSupport).length < pol.min) return false;
           if (hadCharge && !rest.some(isChargeCapable)) return false;
           if (!rest.some(n => getNurseSkillRank(n) >= 3)) return false;
           return true;
@@ -14344,6 +14420,98 @@ function phase6e_ensureTeamCoverage(state, ward, y, m) {
    Phase 0~5 배정 후에도 비어있는 셀은 모두 OF(오프)로 채운다.
    잠긴 셀은 건드리지 않는다.
 ─────────────────────────────────────────────────────────────── */
+/* ── Phase 6g: 시니어 확보 재배치 (교환) ────────────────────────
+   대원칙 7조(듀티 시니어 1명)를 못 지키면 그 교대 배정이 통째로 지워진다.
+   그 전에, 연속근무 상한 때문에 못 들어오는 시니어의 앞선 근무 하루를
+   다른 사람에게 넘겨 연속을 끊고 데려온다.
+   교환 후에도 조건을 못 맞추면 스냅샷으로 원상 복구한다.
+   D/E만 — N은 블록 단위 원칙상 낱개로 손대지 않는다.
+─────────────────────────────────────────────────────────────── */
+function phase6g_secureSeniorBySwap(state, ward, y, m) {
+  const last   = daysInMonth(y, m);
+  const WORK   = ['D', 'E', 'N', 'MD', 'SD6'];
+  const nurses = (ward.nurses || []).filter(n =>
+    n.employmentStatus !== 'leave' && n.employmentStatus !== 'inactive'
+  );
+
+  for (let day = 1; day <= last; day++) {
+    for (const shift of ['D', 'E']) {
+      const onShift = () => nurses.filter(n => state.get(n.id, day) === shift);
+      if (!onShift().length || onShift().some(isNurseSeniorSupport)) continue;
+
+      const cands = nurses.filter(n =>
+        isNurseSeniorSupport(n) &&
+        _p6_canRecruit(n, day, state) &&
+        getAllowedCodes(n).map(c => String(c).toUpperCase()).includes(shift)
+      );
+
+      let secured = false;
+      for (const senior of cands) {
+        if (secured) break;
+        // 앞쪽 연속근무 구간을 하루씩 끊어 본다 (가까운 날부터)
+        for (let d = day - 1; d >= 1; d--) {
+          const freed = state.get(senior.id, d);
+          if (!WORK.includes(freed)) break;        // 연속 구간의 끝
+          if (state.isLocked(senior.id, d)) continue;
+
+          const snap = state.snapshot();
+          state.clear(senior.id, d, 'phase6g_free');
+          state.assign(senior.id, d, 'OF', 'phase6g_free');
+
+          const filler = nurses.filter(n =>
+            n.id !== senior.id &&
+            _p6_canRecruit(n, d, state) &&
+            canAssign(n, d, freed, state, ward, y, m) &&
+            _p6_noForwardViolation(n, d, freed, state, last)
+          ).sort((a, b) =>
+            scoreAssignment(b, d, freed, state, ward, y, m) -
+            scoreAssignment(a, d, freed, state, ward, y, m)
+          )[0];
+
+          if (filler && canAssign(senior, day, shift, state, ward, y, m)) {
+            _p6_reassign(filler, d, freed, state, 'phase6g_backfill');
+            _p6_reassign(senior, day, shift, state, 'phase6g_swap');
+            secured = true;
+            break;
+          }
+          state.restore(snap);
+        }
+      }
+    }
+  }
+}
+
+/* ── Phase 6f: 시니어 몫으로 비워 둔 자리 되메우기 ───────────────
+   canAssign의 시니어 게이트는 비시니어가 시니어 자리를 먼저 가져가지 못하게
+   자리를 남겨 둔다. 끝내 시니어가 오지 않으면 그 자리는 빈칸으로 남아
+   최소인원 미달이 된다 — "빈칸을 만들지 않는다"는 운영 원칙에 따라
+   여기서 시니어 게이트만 풀고 되메운다. 위반은 SENIOR_PRESENCE(ERROR)로 남는다.
+   N은 블록 단위 배정 원칙상 낱개로 메우지 않는다.
+─────────────────────────────────────────────────────────────── */
+function phase6f_backfillSeniorReservedSlots(state, ward, y, m) {
+  const last   = daysInMonth(y, m);
+  const nurses = (ward.nurses || []).filter(n =>
+    n.employmentStatus !== 'leave' && n.employmentStatus !== 'inactive'
+  );
+
+  for (let day = 1; day <= last; day++) {
+    for (const shift of ['D', 'E']) {
+      const minReq = getStaffingMinForDate(ward, y, m, day, shift);
+      while (nurses.filter(n => state.get(n.id, day) === shift).length < minReq) {
+        const cands = nurses.filter(n =>
+          state.get(n.id, day) === '' &&
+          canAssign(n, day, shift, state, ward, y, m, { allowSeniorGap: true })
+        ).sort((a, b) =>
+          scoreAssignment(b, day, shift, state, ward, y, m) -
+          scoreAssignment(a, day, shift, state, ward, y, m)
+        );
+        if (!cands.length) break;
+        state.assign(cands[0].id, day, shift, `phase6f_${shift}`);
+      }
+    }
+  }
+}
+
 function phase7_finalizeRemainingCells(state, ward, y, m) {
   const last   = daysInMonth(y, m);
   const nurses = (ward.nurses || []).filter(n =>
@@ -14418,8 +14586,10 @@ const SchedulerEngine = {
     phase6_limitedBalanceWithSimulation(state, engineWard, y, m);
     phase6b_rebalanceOffFairness(state, engineWard, y, m);
     phase6c_ensureSkillMix(state, engineWard, y, m);
+    phase6g_secureSeniorBySwap(state, engineWard, y, m);
     phase6d_balanceSeniorMix(state, engineWard, y, m);
     phase6e_ensureTeamCoverage(state, engineWard, y, m);
+    phase6f_backfillSeniorReservedSlots(state, engineWard, y, m);
     phase7_finalizeRemainingCells(state, engineWard, y, m);
 
     const violations = getViolations(state, engineWard, y, m);
