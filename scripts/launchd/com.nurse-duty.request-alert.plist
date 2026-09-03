@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.nurse-duty.request-alert</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>cd "/Users/soonyounglee/Desktop/9. nurse-scheduler-shared-deploy" &amp;&amp; ./scripts/request-watch.sh alert &gt;&gt; "/Users/soonyounglee/Library/Logs/nurse-duty-request.log" 2&gt;&amp;1</string>
+  </array>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
