@@ -1647,7 +1647,8 @@ function getPreviousMonthNightRecoveryRemaining(ward,nurseId,y,m,restNeeded=2){
     if(!code || offCodes.includes(code)) restAfter++;
     else return 0;
   }
-  return Math.max(0, Math.max(2, Number(restNeeded||2))-restAfter);
+  // 하한은 1 — 병동 설정(getWardNightRestDays)이 1이면 그대로 1을 쓴다 (과거 하한 2가 병동 설정을 무시했음)
+  return Math.max(0, Math.max(1, Number(restNeeded||1))-restAfter);
 }
 function countTrailingFromArray(arr, predicate){
   let count=0;
@@ -1778,11 +1779,16 @@ function normalizeWardStructure(ward){
   if(!Array.isArray(ward.teamOptions) || ward.teamOptions.length===0) ward.teamOptions = defaultTeamOptions();
   if(ward.nightRestDaysAfterBlock === undefined || ward.nightRestDaysAfterBlock === null) ward.nightRestDaysAfterBlock = 2;
   ward.nightRestDaysAfterBlock = getWardNightRestDays(ward);
+  // N 재진입 텀 병동별 설정 — null/미설정 = 근무유형 값을 따름, 0 = 텀 없음, 1 이상 = 그 일수
+  if(ward.nightReentryGap === undefined) ward.nightReentryGap = null;
 
   (ward.nurses||[]).forEach(n=>{
     normalizeNurseSkillProfile(n);
     if(typeof n.isNewNurse !== 'boolean') n.isNewNurse = Array.isArray(n.placementRuleIds) && n.placementRuleIds.includes('pl-new');
     normalizePersonalShiftDayRules(n);
+    // 기존 데이터 이관 — 근무유형은 있는데 개인조건이 전부 꺼져 있으면(=과거 기본값) 허용 근무 전부 켜짐으로 채운다.
+    // 일부만 켜져 있는 직원은 수간호사가 의도적으로 끈 것이므로 건드리지 않는다.
+    if(getSelectedWorkTypeIdsForNurse(n).length && !Object.keys(n.personalShiftRuleEnabled||{}).length) fillDefaultPersonalShiftRules(n);
     if(n.minConsecutiveOff === undefined || n.minConsecutiveOff === null || n.minConsecutiveOff === '') n.minConsecutiveOff = data.commonScheduleSettings?.defaultMinConsecutiveOff ?? 1;
     if(n.maxConsecutiveOff === undefined || n.maxConsecutiveOff === null || n.maxConsecutiveOff === '') n.maxConsecutiveOff = data.commonScheduleSettings?.defaultMaxConsecutiveOff ?? 3;
     if(n.minConsecutiveNight === undefined || n.minConsecutiveNight === null || n.minConsecutiveNight === '') n.minConsecutiveNight = data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0;
@@ -1833,7 +1839,9 @@ function normalizePersonalShiftDayRules(n){
   });
   n.personalShiftDayRules=next;
   n.personalShiftRuleEnabled=enabled;
-  if(n._shiftTypeEnabled===undefined) n._shiftTypeEnabled=enabledSrc;
+  // _shiftTypeEnabled 는 폐기 — 최초 1회 스냅샷이 DB에 남아 이후 개인조건 변경이 엔진에 반영되지 않던 버그의 원인.
+  // normalize 가 저장 전마다 돌므로 여기서 지우면 저장 데이터에서도 제거된다.
+  if('_shiftTypeEnabled' in n) delete n._shiftTypeEnabled;
   return next;
 }
 function personalShiftDateTypeLabels(){
@@ -1844,19 +1852,123 @@ function personalShiftRuleSummaryShort(n){
   const enabled=n.personalShiftRuleEnabled||{};
   const short={weekday:'평',sat:'토',sun:'일',holiday:'공'};
   const dateTypes=['weekday','sat','sun','holiday'];
+  const hasAny=Object.keys(enabled).length>0;
+  const allowedWork=hasAny ? getAllowedCodes(n).map(c=>String(c).toUpperCase()) : [];
   const parts=personalShiftCodes().map(shift=>{
-    if(!enabled[shift]) return '';
+    if(!enabled[shift]){
+      // 근무유형은 허용하는데 조건에서 끈 근무는 "미사용"으로 한눈에 보이게 표시
+      return hasAny && allowedWork.includes(shift) ? `${shift} 미사용` : '';
+    }
     const allowed=Array.isArray(rules[shift]) && rules[shift].length ? rules[shift] : dateTypes;
-    const label=allowed.length===dateTypes.length ? '전체' : allowed.map(t=>short[t]||t).join('·');
-    return `${shift}:${label}`;
+    if(allowed.length===dateTypes.length) return ''; // 전체 허용은 제한이 아니므로 표시 생략
+    return `${shift}:${allowed.map(t=>short[t]||t).join('·')}`;
   }).filter(Boolean);
   return parts.length ? parts.join(' ') : '';
 }
 function personalShiftCodes(){ return ['D','E','N','MD','SD6']; }
+// 개인조건 기본값 — 근무유형이 허용하는 근무를 전부 "조건 적용" 켜짐(요일 전체 허용)으로 채운다.
+// 엔진 해석(켜지지 않은 근무 = 배정 안 함)은 그대로이므로, 켜진 상태로 시작해야
+// 수간호사가 끄는 방식으로 쓸 수 있다 (43W 전은미 사례 재발 방지).
+function fillDefaultPersonalShiftRules(n){
+  if(!n) return n;
+  const allowed=getAllowedCodes(n).map(c=>String(c).toUpperCase()).filter(c=>personalShiftCodes().includes(c));
+  const enabled={};
+  allowed.forEach(c=>{ enabled[c]=true; });
+  n.personalShiftRuleEnabled=enabled;
+  n.personalShiftDayRules={};
+  return n;
+}
+/* ── 대원칙과 충돌하는 개인조건 검사 ──────────────────────────────
+   nurse에 draft(변경안)를 덮은 가정 상태가 대원칙을 지킬 수 없게 만드는지 판정한다.
+   반환: [{field, reason}] — field: 'enabled.N' · 'days.N' · 'days.N.sat' ·
+   'minConsecutiveNight' · 'maxNightPerMonth' · 'maxConsecutiveDays' · 'feasibility'.
+   draft 없이 부르면(저장값 그대로) 이미 저장된 충돌 데이터 점검용 — 이때 e) 진단 비교는 건너뛴다. */
+function personalConditionConflicts(ward, nurse, draft){
+  const out=[];
+  if(!ward||!nurse) return out;
+  const h=JSON.parse(JSON.stringify(nurse));
+  Object.assign(h, draft||{});
+  delete h._shiftTypeEnabled;
+  normalizePersonalShiftDayRules(h);
+  const isActive=x=>x&&x.employmentStatus!=='leave'&&x.employmentStatus!=='inactive';
+  if(!isActive(h)) return out;
+  const allowedWork=getAllowedCodes(h).map(c=>String(c).toUpperCase()).filter(c=>personalShiftCodes().includes(c));
+  const en=h.personalShiftRuleEnabled||{};
+  const hasAny=Object.keys(en).length>0;
+  const labels=personalShiftDateTypeLabels();
+  const isNK=typeof isNightKeepNurse==='function' && isNightKeepNurse(h);
+  const nightAllowed=allowedWork.includes('N') && (!hasAny || !!en.N);
+
+  // f) 허용 근무가 하나뿐이면 그 근무의 '사용'은 끌 수 없다 (나이트킵의 N, 상근·데이킵의 D)
+  const denAllowed=['D','E','N'].filter(s=>allowedWork.includes(s));
+  if(hasAny && denAllowed.length===1 && !en[denAllowed[0]]){
+    out.push({field:'enabled.'+denAllowed[0], reason:`${denAllowed[0]}는 이 직원의 유일한 근무이므로 끌 수 없습니다`});
+  }
+
+  // b) 6조 개인 상한 ↔ 4조 N 묶음 (N을 실제로 설 수 있을 때만)
+  const num=(key,def)=>getNurseNumberSetting(h,key,data.commonScheduleSettings?.[def] ?? 0);
+  const minN=num('minConsecutiveNight','defaultMinConsecutiveNight');
+  const maxNs=num('maxConsecutiveNight','defaultMaxConsecutiveNight');
+  const maxDays=num('maxConsecutiveDays','defaultMaxConsecutiveDays');
+  const monthN=isNK ? 0 : num('maxNightPerMonth','defaultMaxNightPerMonth');
+  if(nightAllowed){
+    if(minN>0 && maxNs>0 && minN>maxNs) out.push({field:'minConsecutiveNight', reason:`연속 N 최소(${minN})가 최대(${maxNs})보다 큽니다`});
+    if(!isNK && monthN>0 && minN>0 && monthN<minN) out.push({field:'maxNightPerMonth', reason:`월 N 최대(${monthN})가 연속 N 최소(${minN})보다 작아 N 묶음을 한 번도 놓을 수 없습니다`});
+    if(maxDays>0 && maxNs>0 && maxDays<maxNs) out.push({field:'maxConsecutiveDays', reason:`연속근무 최대(${maxDays})가 연속 N 최대(${maxNs})보다 작습니다`});
+    // c) 4조 ↔ 요일 제한 — N 허용 요일유형만으로 연속 N 최소 묶음을 만들 수 없으면 안 됨 (일반 달력 기준)
+    if(minN>=2){
+      const rulesN=Array.isArray(h.personalShiftDayRules?.N)&&h.personalShiftDayRules.N.length ? h.personalShiftDayRules.N : ['weekday','sat','sun','holiday'];
+      const s=new Set(rulesN);
+      let runMax;
+      if(s.has('weekday')&&s.has('sat')&&s.has('sun')) runMax=Infinity;
+      else if(s.has('weekday')&&(s.has('sat')||s.has('sun'))) runMax=6;
+      else if(s.has('weekday')) runMax=5;
+      else if(s.has('sat')&&s.has('sun')) runMax=2;
+      else runMax=1; // 토·일 단독 또는 공휴일만 — 일반 달력에서 연속 보장 불가
+      if(runMax<minN) out.push({field:'days.N', reason:`N 허용 요일(${rulesN.map(t=>labels[t]||t).join('·')})만으로는 연속 N 최소 ${minN} 묶음을 만들 수 없습니다`});
+    }
+  }
+
+  // a) 7조 시니어 — 이 직원(시니어)의 조건 때문에 인원이 필요한 듀티·요일유형에 배정 가능한 시니어가 0명이 되면 안 됨
+  if(typeof isNurseSeniorSupport==='function' && isNurseSeniorSupport(h)){
+    const pool=(ward.nurses||[]).filter(x=>isActive(x)&&!isHeadNurseExcluded(x))
+      .map(x=>String(x.id)===String(h.id)?h:x)
+      .filter(isNurseSeniorSupport);
+    ['D','E','N'].forEach(shift=>{
+      ['weekday','sat','sun','holiday'].forEach(dtype=>{
+        const period=getStaffingPeriodByDateType(dtype);
+        const min=Number(ward.staffingRules?.[period]?.[shift]?.min ?? 0);
+        if(min<=0) return;
+        const cover=pool.filter(s=>{
+          if(!getAllowedCodes(s).map(c=>String(c).toUpperCase()).includes(shift)) return false;
+          return isPersonalShiftAllowedForDateType(s,shift,dtype);
+        }).length;
+        if(cover===0) out.push({field:`days.${shift}.${dtype}`, reason:`${shift} ${labels[dtype]||dtype}에 배정 가능한 시니어가 없어집니다`});
+      });
+    });
+  }
+
+  // e) 8조·최소인원 ↔ 병동 정원 — 변경으로 생성 전 진단이 "가능 → 불가"로 바뀌면 안 됨 (현재 화면 월 기준)
+  if(draft && typeof diagnoseScheduleFeasibility==='function'){
+    try{
+      const y=typeof uiYear==='number'?uiYear:new Date().getFullYear();
+      const m=typeof uiMonth==='number'?uiMonth:new Date().getMonth()+1;
+      const before=diagnoseScheduleFeasibility(ward,y,m);
+      if(before && before.ok){
+        const w2={...ward, nurses:(ward.nurses||[]).map(x=>String(x.id)===String(h.id)?h:x)};
+        const after=diagnoseScheduleFeasibility(w2,y,m);
+        if(after && !after.ok){
+          after.shortfalls.forEach(sf=>out.push({field:'feasibility', reason:`${sf.title}: ${String(sf.detail||'').replace(/<[^>]+>/g,'')}`}));
+        }
+      }
+    }catch(e){}
+  }
+  return out;
+}
 function isPersonalShiftAllowedForDateType(n,shift,dtype){
   const code=String(shift||'').toUpperCase();
   if(!personalShiftCodes().includes(code)) return true;
-  const shiftTypeEnabled=n._shiftTypeEnabled!==undefined ? n._shiftTypeEnabled : (n.personalShiftRuleEnabled||{});
+  const shiftTypeEnabled=n.personalShiftRuleEnabled||{};
   if(Object.keys(shiftTypeEnabled).length>0 && !shiftTypeEnabled[code]) return false;
   const rules=normalizePersonalShiftDayRules(n);
   const allowed=Array.isArray(rules[code]) ? rules[code] : [];
@@ -1868,8 +1980,10 @@ function personalShiftRuleSummary(n){
   const enabled=n.personalShiftRuleEnabled||{};
   const labels=personalShiftDateTypeLabels();
   const dateTypes=['weekday','sat','sun','holiday'];
+  const hasAny=Object.keys(enabled).length>0;
+  const allowedWork=hasAny ? getAllowedCodes(n).map(c=>String(c).toUpperCase()) : [];
   const parts=personalShiftCodes().map(shift=>{
-    if(!enabled[shift]) return '';
+    if(!enabled[shift]) return hasAny && allowedWork.includes(shift) ? `${shift}: 미사용(배정 안 함)` : '';
     const allowed=Array.isArray(rules[shift]) && rules[shift].length ? rules[shift] : dateTypes;
     const label=allowed.length===dateTypes.length ? '전체' : allowed.map(t=>labels[t]||t).join('/');
     return `${shift}: ${label}`;
@@ -5204,7 +5318,7 @@ function renderAdminCodes(){
                 <label class="mini-field"><span>연속N 최소</span><input type="number" value="${rule.minConsecutiveNight||0}" onchange="updateWorkTypeRule('${w.id}','minConsecutiveNight',this.value)"></label>
                 <label class="mini-field"><span>연속N 최대</span><input type="number" value="${rule.maxConsecutiveNight||0}" onchange="updateWorkTypeRule('${w.id}','maxConsecutiveNight',this.value)"></label>
                 <label class="mini-field"><span>N 후 OFF</span><input type="number" value="${rule.nightOffAfter||0}" onchange="updateWorkTypeRule('${w.id}','nightOffAfter',this.value)"></label>
-                ${vis.showNightReentryGap ? `<label class="mini-field"><span>N 텀 최소</span><input type="number" value="${rule.nightReentryGap||0}" onchange="updateWorkTypeRule('${w.id}','nightReentryGap',this.value)"></label>` : ''}
+                ${vis.showNightReentryGap ? `<label class="mini-field"><span>N 텀 최소(병동 미설정 시 기본값)</span><input type="number" value="${rule.nightReentryGap||0}" onchange="updateWorkTypeRule('${w.id}','nightReentryGap',this.value)"></label>` : ''}
                 ${vis.showMonthlyNightRatio ? `<div class="item" style="margin-top:8px;padding:10px 12px;background:#f8fafc"><div class="label">월간 N 목표 자동계산</div><div style="font-weight:700;margin-top:4px">30일: N15 / OFF15 · 31일: N16 / OFF15</div><div class="small muted" style="margin-top:4px">입력값이 아니라 월 일수에 따라 자동 적용됩니다.</div></div>` : ''}
               </div>
               ${vis.isNightKeep ? `<div class="small muted" style="margin-top:8px">나이트킵은 N 전담 사이클형 근무입니다. 30일은 N15/OFF15, 31일은 N16/OFF15를 목표로 하며 연속N과 N후OFF 규칙으로 분산 배치합니다. N 텀은 적용하지 않습니다.</div>` : ''}
@@ -5630,6 +5744,16 @@ function updateWardNightRestDaysAfterBlockMax(val){
   renderWardNurses();
 }
 
+function updateWardNightReentryGap(val){
+  const ward=getCurrentWard();
+  if(!ward) return;
+  // 빈 칸 = 근무유형 기본값을 따름, 0 = 텀 없음, 1 이상 = 그 일수
+  const s=String(val??'').trim();
+  ward.nightReentryGap = s==='' ? null : Math.max(0, Math.floor(Number(s)||0));
+  saveData(true);
+  renderWardNurses();
+}
+
 function updateWardStaffingRule(period,shift,key,val){
   const ward=getCurrentWard();
   normalizeStaffingRulesStructure(ward);
@@ -5781,7 +5905,20 @@ function updateNurseDraft(id,key,val){
   const rows=nurseDraftState[ward.id]||[];
   const n=rows.find(x=>x.id===id);
   if(!n) return;
+  // 대원칙 6조 충돌 값(연속 N 최소/최대·월 N 최대·연속근무 최대)은 입력 즉시 되돌린다
+  const guardKeys=['minConsecutiveNight','maxConsecutiveNight','maxNightPerMonth','maxConsecutiveDays'];
+  const prevVal=guardKeys.includes(key) ? n[key] : undefined;
   n[key]=val;
+  if(guardKeys.includes(key)){
+    const baseSet=new Set(personalConditionConflicts(ward,{...n,[key]:prevVal},null).map(c=>c.field+'|'+c.reason));
+    const news=personalConditionConflicts(ward,n,null).filter(c=>!baseSet.has(c.field+'|'+c.reason));
+    if(news.length){
+      alert(`대원칙과 충돌하여 입력할 수 없습니다:\n- ${news.map(c=>c.reason).join('\n- ')}`);
+      n[key]=prevVal;
+      renderWardNurses();
+      return;
+    }
+  }
   if(key==='skillLevel'){
     n.skillLevel=String(val||'LV3').toUpperCase();
   }
@@ -5810,8 +5947,27 @@ function openPersonalShiftRuleModal(nurseId){
     const allowed=Array.isArray(rules[shift]) && rules[shift].length ? rules[shift] : defaultAllowed;
     return allowed.includes(type) ? 'checked' : '';
   }
+  // 대원칙과 충돌하는 변경(끄기·요일 줄이기)은 처음부터 선택이 안 되게 막는다 — 창을 열 때 미리 계산
+  const conflictBase=new Set(personalConditionConflicts(ward,n,null).map(c=>c.field+'|'+c.reason));
+  const newConflictsIf=draft=>personalConditionConflicts(ward,n,draft).filter(c=>!conflictBase.has(c.field+'|'+c.reason));
+  const enabledBlock={}, dayBlock={};
+  personalShiftCodes().forEach(shift=>{
+    if(!shiftAllowedByWorkType(shift) || !enabled(shift)) return;
+    const en2={...enabledRules}; delete en2[shift];
+    const dr2={...(n.personalShiftDayRules||{})}; delete dr2[shift];
+    const cs=newConflictsIf({personalShiftRuleEnabled:en2, personalShiftDayRules:dr2});
+    if(cs.length) enabledBlock[shift]=cs[0].reason;
+    const curDays=Array.isArray(rules[shift])&&rules[shift].length ? rules[shift] : dateTypes;
+    dateTypes.forEach(t=>{
+      if(!curDays.includes(t)) return;
+      const remain=curDays.filter(x=>x!==t);
+      if(!remain.length) return; // 마지막 1개는 저장 시 "최소 1개" 검사가 막는다
+      const cs2=newConflictsIf({personalShiftRuleEnabled:{...enabledRules,[shift]:true}, personalShiftDayRules:{...(n.personalShiftDayRules||{}),[shift]:remain}});
+      if(cs2.length) dayBlock[`${shift}.${t}`]=cs2[0].reason;
+    });
+  });
   const body=`
-    <div class="sub" style="margin-bottom:12px">1단계로 조건을 적용할 근무를 선택하고, 2단계로 해당 근무가 가능한 요일을 선택합니다. 선택하지 않은 근무는 개인조건을 적용하지 않습니다.</div>
+    <div class="sub" style="margin-bottom:12px">근무유형이 허용하는 근무는 기본으로 모두 켜져 있습니다. 이 직원이 서지 않는 근무는 '사용'을 끄고, 특정 요일만 가능한 근무는 요일을 줄이세요. 꺼진 근무는 자동생성·수동입력 모두에서 배정되지 않습니다.</div>
     <label class="check-item" style="margin-bottom:12px;max-width:260px">
       <input type="checkbox" id="personalShiftAllToggle" onchange="setPersonalShiftModalAll(this.checked)">
       <span>허용 근무 전체 적용</span>
@@ -5822,19 +5978,19 @@ function openPersonalShiftRuleModal(nurseId){
       ${dateTypes.map(t=>`<div class="personal-rule-head">${labels[t]}</div>`).join('')}
       ${personalShiftCodes().map(shift=>`
         <div class="personal-rule-shift">${shift}</div>
-        <label class="personal-rule-check ${shiftAllowedByWorkType(shift)?'':'disabled'}">
-          <input type="checkbox" data-personal-shift-enabled="${shift}" ${enabled(shift)?'checked':''} ${shiftAllowedByWorkType(shift)?'':'disabled'} onchange="updatePersonalShiftModalEnabled('${shift}')">
+        <label class="personal-rule-check ${shiftAllowedByWorkType(shift)&&!enabledBlock[shift]?'':'disabled'}" ${enabledBlock[shift]?`title="${escapeHtml(enabledBlock[shift])}"`:''}>
+          <input type="checkbox" data-personal-shift-enabled="${shift}" ${enabled(shift)?'checked':''} ${shiftAllowedByWorkType(shift)&&!enabledBlock[shift]?'':'disabled'} onchange="updatePersonalShiftModalEnabled('${shift}')">
           <span>${shiftAllowedByWorkType(shift)?'사용':'미허용'}</span>
         </label>
         ${dateTypes.map(t=>`
-          <label class="personal-rule-check ${shiftAllowedByWorkType(shift)?'':'disabled'}" data-personal-day-label="${shift}">
-            <input type="checkbox" data-personal-shift="${shift}" data-personal-day="${t}" ${checked(shift,t)} ${enabled(shift)?'':'disabled'}>
+          <label class="personal-rule-check ${shiftAllowedByWorkType(shift)&&!dayBlock[`${shift}.${t}`]?'':'disabled'}" data-personal-day-label="${shift}" ${dayBlock[`${shift}.${t}`]?`title="${escapeHtml(dayBlock[`${shift}.${t}`])}"`:''}>
+            <input type="checkbox" data-personal-shift="${shift}" data-personal-day="${t}" ${checked(shift,t)} ${enabled(shift)&&!dayBlock[`${shift}.${t}`]?'':'disabled'} ${dayBlock[`${shift}.${t}`]?`data-conflict-reason="${escapeHtml(dayBlock[`${shift}.${t}`])}"`:''}>
             <span>${labels[t]}</span>
           </label>
         `).join('')}
       `).join('')}
     </div>
-    <div class="alert" style="margin-top:12px">예: 상근직은 D만 조건 적용을 선택한 뒤 평일만 체크합니다. D-N keep 직원이 토요일/일요일만 N 가능하면 N만 조건 적용을 선택하고 토요일, 일요일만 체크합니다.</div>`;
+    <div class="alert" style="margin-top:12px">예: 3교대 직원이 N을 서지 않으면 N의 '사용'을 끕니다. 상근직이 평일만 근무하면 D의 요일에서 토·일·공휴일을 끕니다. D-N keep 직원이 토·일만 N 가능하면 N의 요일을 토요일, 일요일만 남깁니다.</div>`;
   openModal(`${escapeHtml(n.name||'직원')} 개인별 배치조건`, body, [
     {label:'취소', action:'close'},
     {label:'적용', primary:true, action:()=>savePersonalShiftRuleModal(nurseId)}
@@ -5849,10 +6005,11 @@ function openPersonalShiftRuleModal(nurseId){
 
 function updatePersonalShiftModalEnabled(shift){
   const en=document.querySelector(`input[data-personal-shift-enabled="${shift}"]`);
-  const active=!!(en && en.checked && !en.disabled);
+  // 대원칙 충돌로 잠근 '사용' 체크는 켜져 있어도 요일 편집을 허용한다 (끄는 것만 차단)
+  const active=!!(en && en.checked);
   ['weekday','sat','sun','holiday'].forEach(t=>{
     const el=document.querySelector(`input[data-personal-shift="${shift}"][data-personal-day="${t}"]`);
-    if(el) el.disabled=!active;
+    if(el) el.disabled=!active || !!el.dataset.conflictReason; // 충돌로 잠근 요일은 다시 풀지 않는다
   });
   document.querySelectorAll(`[data-personal-day-label="${shift}"]`).forEach(label=>{
     if(active) label.classList.remove('disabled');
@@ -5861,7 +6018,7 @@ function updatePersonalShiftModalEnabled(shift){
 }
 
 function setPersonalShiftModalAll(checked){
-  ['D','E','N'].forEach(shift=>{
+  personalShiftCodes().forEach(shift=>{
     const en=document.querySelector(`input[data-personal-shift-enabled="${shift}"]`);
     if(en && !en.disabled){
       en.checked=!!checked;
@@ -5917,6 +6074,16 @@ function savePersonalShiftRuleModal(nurseId){
     }
     if(selected.length<dateTypes.length) next[shift]=selected;
   }
+  // 대원칙 충돌 검사 — UI 비활성화를 우회했더라도 저장에서 다시 막는다 (기존 저장분의 충돌은 통과)
+  {
+    const baseSet=new Set(personalConditionConflicts(ward,n,null).map(c=>c.field+'|'+c.reason));
+    const news=personalConditionConflicts(ward,n,{personalShiftRuleEnabled:enabledRules, personalShiftDayRules:next})
+      .filter(c=>!baseSet.has(c.field+'|'+c.reason));
+    if(news.length){
+      alert(`대원칙과 충돌하여 저장할 수 없습니다:\n- ${news.map(c=>c.reason).join('\n- ')}`);
+      return;
+    }
+  }
   n.personalShiftDayRules=next;
   n.personalShiftRuleEnabled=enabledRules;
   normalizeNurseWorkTypeState(n);
@@ -5963,14 +6130,10 @@ function setNurseDraftSingleWorkType(id, workTypeId){
   const prevWorkTypeId=(n.workTypeIds||[])[0];
   n.workTypeIds=workTypeId ? [workTypeId] : [];
   n.selectedWorkTypes=[...n.workTypeIds];
-  // 3교대로 변경 시 개인조건을 모두 허용으로 자동 초기화
+  // 근무유형 변경 시 그 유형이 허용하는 근무를 전부 "조건 적용" 켜짐(요일 전체)으로 채운다.
+  // 수간호사는 조건설정 창에서 필요한 근무만 끄거나 요일을 줄이는 방식으로 쓴다.
   if(workTypeId && workTypeId!==prevWorkTypeId){
-    const wt=(data.workTypes||[]).find(w=>w.id===workTypeId);
-    const isThreeShift=wt && (wt.id==='wt-three' || (wt.allowedCodes||'').includes('N') && (wt.allowedCodes||'').includes('E') && (wt.allowedCodes||'').includes('D'));
-    if(isThreeShift){
-      n.personalShiftRuleEnabled={};
-      n.personalShiftDayRules={};
-    }
+    fillDefaultPersonalShiftRules(n);
   }
   forceNightFieldsZeroIfNotAllowed(n);
   queueNurseDraftAutoSave();
@@ -6006,6 +6169,20 @@ function saveWardNurseTable(){
   const ward=getCurrentWard();
   ensureWardDraftState();
   (nurseDraftState[ward.id]||[]).forEach(n=>{ normalizeNurseSkillProfile(n); normalizeNurseWorkTypeState(n); normalizePersonalShiftDayRules(n); forceNightFieldsZeroIfNotAllowed(n); });
+  // 대원칙 충돌 검사 — 이번 편집으로 새로 생긴 충돌만 저장을 거부한다 (기존 저장분은 표시만)
+  {
+    const problems=[];
+    (nurseDraftState[ward.id]||[]).forEach(dn=>{
+      const cur=(ward.nurses||[]).find(x=>String(x.id)===String(dn.id));
+      const baseSet=new Set((cur?personalConditionConflicts(ward,cur,null):[]).map(c=>c.field+'|'+c.reason));
+      const news=personalConditionConflicts(ward,dn,null).filter(c=>!baseSet.has(c.field+'|'+c.reason));
+      if(news.length) problems.push(`${dn.name}: ${news.map(c=>c.reason).join(' / ')}`);
+    });
+    if(problems.length){
+      alert(`대원칙과 충돌하는 개인조건이 있어 저장할 수 없습니다.\n\n${problems.join('\n')}`);
+      return;
+    }
+  }
   ward.nurses = JSON.parse(JSON.stringify(nurseDraftState[ward.id]||[]));
   clearNurseDraftStorageForWard(ward.id);
   saveData(true);
@@ -6172,6 +6349,21 @@ function handleManualScheduleUpload(file, targetYear, targetMonth){
         return;
       }
       if(!confirm(`${targetYear}년 ${targetMonth}월 근무표를 엑셀에서 ${count}개 코드를 인식했습니다.\n현재 ${targetYear}년 ${targetMonth}월 근무 초안에 덮어씌울까요?`)) return;
+      // 대원칙 5조 — 근무유형·개인조건에 없는 근무는 업로드에서도 비운다 (업로드 자체는 막지 않음)
+      const cleared=[];
+      Object.keys(schedule).forEach(dk=>{
+        const d=Number(String(dk).slice(8,10));
+        Object.keys(schedule[dk]||{}).forEach(nid=>{
+          const c=String(schedule[dk][nid]||'').toUpperCase();
+          if(!isHardPlacementWorkCode(c)) return;
+          const n=(ward.nurses||[]).find(x=>String(x.id)===String(nid));
+          if(n && !isHeadNurseExcluded(n) && !hardPlacementAllowedForNurse(n,c,targetYear,targetMonth,d)){
+            schedule[dk][nid]='OF';
+            cleared.push(`${n.name} ${targetMonth}/${d} ${c}`);
+          }
+        });
+      });
+      if(cleared.length) alert(`개인조건에 없는 근무 ${cleared.length}건을 비웠습니다:\n${cleared.slice(0,20).join(', ')}${cleared.length>20?` 외 ${cleared.length-20}건`:''}`);
       uiYear=targetYear; uiMonth=targetMonth;
       const draft=ensureScheduleDraft(ward, targetYear, targetMonth);
       draft.schedule=schedule;
@@ -6296,6 +6488,23 @@ function renderWardNurses(){
           ${staffingCard('saturday')}
           ${staffingCard('holiday')}
         </div>
+        ${(()=>{
+          // 설정 경고 — 저장은 허용하되, 자동생성이 미달로 남을 설정을 미리 알려준다 (재발 방지)
+          const warns=[];
+          const periodLabels={weekday:'평일',saturday:'토요일',holiday:'공휴일'};
+          Object.entries(periodLabels).forEach(([p,label])=>{
+            ['D','E','N'].forEach(sh=>{
+              const r=ward.staffingRules?.[p]?.[sh];
+              const min=Number(r?.min??0), max=Number(r?.max??0);
+              if(min>0 && max>0 && min===max) warns.push(`${label} ${sh} 최소=최대(${min}) — 여유가 0이라 한 명만 제약에 걸려도 그 날은 미달로 남습니다`);
+            });
+          });
+          try{
+            const dg=diagnoseScheduleFeasibility(ward, uiYear, uiMonth);
+            if(dg && !dg.ok) dg.shortfalls.forEach(sf=>warns.push(`${sf.title} 부족: ${String(sf.detail||'').replace(/<[^>]+>/g,'')}`));
+          }catch(e){}
+          return warns.length?`<div class="alert" style="margin-top:12px;background:#fffbeb;border:1px solid #f59e0b;color:#92400e">⚠ 설정 경고 (${uiYear}년 ${uiMonth}월 기준 · 저장은 됩니다)<br>${warns.map(escapeHtml).join('<br>')}</div>`:'';
+        })()}
         <div class="staffing-period-grid" style="margin-top:18px">
           <div class="staffing-card">
             <div class="staffing-card-title">나이트 근무 후 OFF 개수 설정</div>
@@ -6304,7 +6513,16 @@ function renderWardNurses(){
               <label class="mini-field"><span>최소</span><input type="number" min="1" value="${getWardNightRestDays(ward)}" onchange="updateWardNightRestDaysAfterBlock(this.value)"></label>
               <label class="mini-field"><span>최대</span><input type="number" min="0" value="${Number(ward.nightRestDaysAfterBlockMax ?? 0)}" onchange="updateWardNightRestDaysAfterBlockMax(this.value)"></label>
             </div>
-            <div class="small muted" style="padding:10px 16px">최소 = N 묶음 후 반드시 잠그는 보호 OFF 개수(하드 규칙). 최대 = N 후 OFF가 이 개수를 넘지 않게 생성이 근무 복귀를 유도하고 초과 시 경고합니다(0 = 제한 없음).<br>대원칙: 마지막 N 후 OFF가 <strong>1개</strong>면 다음날 <strong>D 배치 금지</strong>(E부터 가능), <strong>2개</strong> 이상이면 다음날 D도 가능합니다.</div>
+            <div class="staffing-row">
+              <div class="staffing-shift">N 재진입 텀</div>
+              <label class="mini-field"><span>일수</span><input type="number" min="0" value="${ward.nightReentryGap===undefined||ward.nightReentryGap===null||ward.nightReentryGap===''?'':Number(ward.nightReentryGap)}" placeholder="기본값" onchange="updateWardNightReentryGap(this.value)"></label>
+              <span class="small muted">${(()=>{
+                if(ward.nightReentryGap!==undefined && ward.nightReentryGap!==null && ward.nightReentryGap!=='') return `병동 설정 ${Number(ward.nightReentryGap)}일 적용${Number(ward.nightReentryGap)===0?' (제한 없음)':''}`;
+                const gaps=[...new Set(rows.filter(n=>n.employmentStatus!=='leave'&&n.employmentStatus!=='inactive'&&!isNightKeepNurse(n)).map(n=>Math.max(0,Number((getPrimaryWorkTypeRule(n)||{}).nightReentryGap||0))))].sort((a,b)=>a-b);
+                return `근무유형 기본값(${gaps.length?gaps.join('·'):0}) 적용`;
+              })()}</span>
+            </div>
+            <div class="small muted" style="padding:10px 16px">최소 = N 묶음 후 반드시 잠그는 보호 OFF 개수(하드 규칙). 최대 = N 후 OFF가 이 개수를 넘지 않게 생성이 근무 복귀를 유도하고 초과 시 경고합니다(0 = 제한 없음).<br>대원칙: 마지막 N 후 OFF가 <strong>1개</strong>면 다음날 <strong>D 배치 금지</strong>(E부터 가능), <strong>2개</strong> 이상이면 다음날 D도 가능합니다.<br>N 재진입 텀 = N 묶음이 끝난 뒤 다시 N을 시작하기까지 비워 둘 날 수. 관행이 3~4일이면 3을 권장. 0이면 제한 없음. 비워 두면 전체관리자 근무유형의 기본값을 따르고, 나이트킵은 이 값과 무관합니다.</div>
           </div>
           <div class="staffing-card">
             <div class="staffing-card-title">시니어 배치 기준 <span class="small muted">(최소 = 하한 1 · 최대 0 = 제한 없음)</span></div>
@@ -6378,9 +6596,14 @@ function renderWardNurses(){
               const nightKeep=nurseDraftIsNightKeep(n);
               const nightDisabled=nightAllowed?'':'disabled class="night-disabled-input"';
               const nightNote=nightAllowed?'':'<div class="night-disabled-note">N 미허용 유형: 자동 0 고정</div>';
+              // 이미 저장돼 있는 대원칙 충돌 데이터 — 값은 바꾸지 않고 빨갛게 표시 + 사유 (생성은 사전검사가 막는다)
+              const rowConflicts=personalConditionConflicts(ward,n,null);
+              const conflictFields=new Set(rowConflicts.map(c=>c.field));
+              const redIf=f=>conflictFields.has(f)?'style="border:2px solid #dc2626;border-radius:8px"':'';
+              const conflictBadge=rowConflicts.length?`<span class="badge" style="background:#fde8e8;color:#b91c1c;border-color:#fca5a5" title="${escapeHtml(rowConflicts.map(c=>c.reason).join(' / '))}">⚠ 대원칙 충돌 ${rowConflicts.length}</span>`:'';
               const nightMaxCell=nightKeep
                 ? '<div class="small muted"><strong>NK 자동계산</strong><br>30일: N15/OFF15<br>31일: N16/OFF15</div>'
-                : `<label class="mini-field"><span>최대</span><input type="number" min="0" value="${nightAllowed ? (n.maxNightPerMonth ?? data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6) : 0}" ${nightDisabled} onchange="updateNurseDraft('${n.id}','maxNightPerMonth',this.value===''?null:Number(this.value))"></label>${nightNote}`;
+                : `<label class="mini-field"><span>최대</span><input type="number" min="0" ${redIf('maxNightPerMonth')} value="${nightAllowed ? (n.maxNightPerMonth ?? data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6) : 0}" ${nightDisabled} onchange="updateNurseDraft('${n.id}','maxNightPerMonth',this.value===''?null:Number(this.value))"></label>${nightNote}`;
               return `
               <tr>
                 <td style="text-align:center;font-weight:700;color:#64748b">${idx+1}</td>
@@ -6388,11 +6611,11 @@ function renderWardNurses(){
                 <td><select onchange="updateNurseDraft('${n.id}','team',this.value)" class="team-select">${getWardTeamOptions(ward).map(t=>`<option value="${escapeHtml(t)}" ${String(n.team||'').toUpperCase()===t?'selected':''}>${escapeHtml(t)}</option>`).join('')}</select></td>
                 <td><input value="${escapeHtml(n.name||'')}" placeholder="직원명 입력" oninput="updateNurseDraft('${n.id}','name',this.value)"></td>
                 <td><select onchange="setNurseDraftSingleWorkType('${n.id}',this.value)"><option value="">선택</option>${(data.workTypes||[]).map(w=>`<option value="${w.id}" ${(n.workTypeIds||[])[0]===w.id?'selected':''}>${escapeHtml(w.name)}${w.code?` (${escapeHtml(w.code)})`:''}</option>`).join('')}</select><div class="small muted" style="margin-top:4px">근무유형은 1개만 선택됩니다.</div></td>
-                <td><div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">${personalShiftRuleSummaryShort(n)?`<span class="condition-summary" title="${escapeHtml(personalShiftRuleSummary(n))}">${escapeHtml(personalShiftRuleSummaryShort(n))}</span>`:''}<button type="button" onclick="openPersonalShiftRuleModal('${n.id}')" style="white-space:nowrap">조건설정</button></div></td>
-                <td><label class="mini-field"><span>최대</span><input type="number" value="${n.maxConsecutiveDays ?? data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5}" onchange="updateNurseDraft('${n.id}','maxConsecutiveDays',this.value===''?null:Number(this.value))"></label></td>
+                <td><div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">${conflictBadge}${personalShiftRuleSummaryShort(n)?`<span class="condition-summary" title="${escapeHtml(personalShiftRuleSummary(n))}">${escapeHtml(personalShiftRuleSummaryShort(n))}</span>`:''}<button type="button" onclick="openPersonalShiftRuleModal('${n.id}')" style="white-space:nowrap">조건설정</button></div></td>
+                <td><label class="mini-field"><span>최대</span><input type="number" ${redIf('maxConsecutiveDays')} value="${n.maxConsecutiveDays ?? data.commonScheduleSettings?.defaultMaxConsecutiveDays ?? 5}" onchange="updateNurseDraft('${n.id}','maxConsecutiveDays',this.value===''?null:Number(this.value))"></label></td>
                 <td><div class="nurse-limit-pair"><label class="mini-field"><span>최소</span><input type="number" value="${n.minConsecutiveOff ?? data.commonScheduleSettings?.defaultMinConsecutiveOff ?? 1}" onchange="updateNurseDraft('${n.id}','minConsecutiveOff',this.value===''?null:Number(this.value))"></label><label class="mini-field"><span>최대</span><input type="number" value="${n.maxConsecutiveOff ?? data.commonScheduleSettings?.defaultMaxConsecutiveOff ?? 3}" onchange="updateNurseDraft('${n.id}','maxConsecutiveOff',this.value===''?null:Number(this.value))"></label></div></td>
                 <td>${nightMaxCell}</td>
-                <td><div class="nurse-limit-pair"><label class="mini-field"><span>최소</span><input type="number" min="0" value="${nightAllowed ? (n.minConsecutiveNight ?? data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0) : 0}" ${nightDisabled} onchange="updateNurseDraft('${n.id}','minConsecutiveNight',this.value===''?null:Number(this.value))"></label><label class="mini-field"><span>최대</span><input type="number" min="0" value="${nightAllowed ? (n.maxConsecutiveNight ?? data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3) : 0}" ${nightDisabled} onchange="updateNurseDraft('${n.id}','maxConsecutiveNight',this.value===''?null:Number(this.value))"></label></div>${nightNote}</td>
+                <td><div class="nurse-limit-pair"><label class="mini-field"><span>최소</span><input type="number" min="0" ${redIf('minConsecutiveNight')} value="${nightAllowed ? (n.minConsecutiveNight ?? data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 0) : 0}" ${nightDisabled} onchange="updateNurseDraft('${n.id}','minConsecutiveNight',this.value===''?null:Number(this.value))"></label><label class="mini-field"><span>최대</span><input type="number" min="0" ${redIf('maxConsecutiveNight')} value="${nightAllowed ? (n.maxConsecutiveNight ?? data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3) : 0}" ${nightDisabled} onchange="updateNurseDraft('${n.id}','maxConsecutiveNight',this.value===''?null:Number(this.value))"></label></div>${nightNote}</td>
                 <td>${nurseMobileAccountCell(n)}</td>
                 <td><input value="${escapeHtml(n.notes||'')}" placeholder="메모 입력" onchange="updateNurseDraft('${n.id}','notes',this.value)"></td>
                 <td><div class="cell-actions"><select onchange="updateNurseDraft('${n.id}','employmentStatus',this.value)" class="small-input"><option value="active" ${n.employmentStatus==='active'?'selected':''}>active</option><option value="leave" ${n.employmentStatus==='leave'?'selected':''}>leave</option></select><button class="danger" type="button" onclick="deleteNurse('${n.id}')">삭제</button></div></td>
@@ -6428,6 +6651,22 @@ function renderWardLeave(){
   const selectedPriority=document.getElementById('leavePriority')?.value || 'must';
   const selectedNote=document.getElementById('leaveNote')?.value || '';
   const lp=ward.leavePolicy||{};
+  // 정책 초과 표시용 — 이미 저장된 초과 신청은 건드리지 않고 표시만 한다 (WO만 대상)
+  const _overPolicyIds=(()=>{
+    const ids=new Set();
+    const wo=leaveList.filter(r=>r&&String(r.type||'WO').toUpperCase()==='WO');
+    if(lp.maxPerDay){
+      const byDate={};
+      wo.forEach(r=>{ (byDate[r.date]=byDate[r.date]||[]).push(r); });
+      Object.values(byDate).forEach(a=>{ if(a.length>lp.maxPerDay) a.forEach(r=>ids.add(r.id)); });
+    }
+    if(lp.maxPerNurse){
+      const byNurseMonth={};
+      wo.forEach(r=>{ const k=`${r.nurseId}|${String(r.date).slice(0,7)}`; (byNurseMonth[k]=byNurseMonth[k]||[]).push(r); });
+      Object.values(byNurseMonth).forEach(a=>{ if(a.length>lp.maxPerNurse) a.forEach(r=>ids.add(r.id)); });
+    }
+    return ids;
+  })();
   el.innerHTML=`
     <div class="card">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
@@ -6489,7 +6728,7 @@ function renderWardLeave(){
     <div class="card">
       <h3>등록된 휴가 목록</h3>
       <div style="height:12px"></div>
-      ${leaveList.map(r=>`<div class="item" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><div><strong>${r.date}</strong> · ${r.type} · ${ward.nurses.find(n=>n.id===r.nurseId)?.name||''}</div><button class="danger" onclick="deleteWardLeave('${r.id}')">삭제</button></div><div class="small muted" style="margin-top:6px">${r.priority||''} ${r.note?`· ${escapeHtml(r.note)}`:''}</div></div>`).join('') || '<div class="muted">등록된 휴가가 없습니다.</div>'}
+      ${leaveList.map(r=>`<div class="item" style="margin-bottom:10px"><div class="row" style="justify-content:space-between"><div><strong>${r.date}</strong> · ${r.type} · ${ward.nurses.find(n=>n.id===r.nurseId)?.name||''}${_overPolicyIds.has(r.id)?' <span class="badge" style="background:#fde8e8;color:#b91c1c">정책 초과</span>':''}</div><button class="danger" onclick="deleteWardLeave('${r.id}')">삭제</button></div><div class="small muted" style="margin-top:6px">${r.priority||''} ${r.note?`· ${escapeHtml(r.note)}`:''}</div></div>`).join('') || '<div class="muted">등록된 휴가가 없습니다.</div>'}
     </div>`;
   attachTimeSelectBehavior();
 }
@@ -6506,6 +6745,31 @@ function saveWardLeavePolicy(){
   saveData(true);
   popup('원티드 오프 신청 기준이 저장되었습니다. 직원용 모바일 앱에 바로 적용됩니다.');
   renderWardLeave();
+}
+/* 휴무 신청 정책 공통 검사 — 대상은 WO만 (AL/SL/HA/HP/교육/공가는 정책 대상 아님).
+   값이 비어 있으면(제한 없음) 해당 검사는 건너뛴다. confirmFrom은 화면 안내만 하고 여기서 검사하지 않는다.
+   반환: {ok:true} 또는 {ok:false, reason:'사유'} */
+function checkLeavePolicy(ward, nurseId, date, type){
+  if(String(type||'WO').toUpperCase()!=='WO') return {ok:true};
+  const lp=ward?.leavePolicy||{};
+  // a) 신청 기간 — 신청 시각(오늘) 기준
+  const now=new Date();
+  const today=makeDateKey(now.getFullYear(), now.getMonth()+1, now.getDate());
+  if((lp.applyStart&&today<lp.applyStart)||(lp.applyEnd&&today>lp.applyEnd))
+    return {ok:false, reason:`신청 기간은 ${lp.applyStart||'제한 없음'}~${lp.applyEnd||'제한 없음'}입니다`};
+  const list=(ward?.leaveRequests||ward?.requests||[]).filter(r=>r&&String(r.type||'WO').toUpperCase()==='WO');
+  // b) 같은 날 최대 인원 — 본인의 같은 날짜 기존 신청(교체)은 세지 않는다
+  if(lp.maxPerDay){
+    const sameDay=list.filter(r=>r.date===date&&r.nurseId!==nurseId).length;
+    if(sameDay>=lp.maxPerDay) return {ok:false, reason:`${date}은(는) 이미 ${sameDay}명이 신청했습니다 (하루 최대 ${lp.maxPerDay}명)`};
+  }
+  // c) 1인 월 최대 — 같은 날짜 기존 신청의 교체는 세지 않는다
+  if(lp.maxPerNurse){
+    const ym=String(date).slice(0,7);
+    const mine=list.filter(r=>r.nurseId===nurseId&&String(r.date).startsWith(ym)&&r.date!==date).length;
+    if(mine>=lp.maxPerNurse) return {ok:false, reason:`이번 달 신청 ${lp.maxPerNurse}건을 모두 사용했습니다`};
+  }
+  return {ok:true};
 }
 function renderLeaveBasketCalendar(y,m){
   const firstDow=new Date(y,m-1,1).getDay();
@@ -6547,6 +6811,17 @@ function saveLeaveBasket(){
   if(!nurseId) return alert('간호사를 선택하세요.');
   if(!leaveBasketState.length) return alert('바스켓에 담긴 날짜가 없습니다.');
   if(!ward.leaveRequests) ward.leaveRequests=[];
+  // 휴무 신청 정책 검사 — 관리자 등록은 거부 대신 확인창으로 정책을 넘길 수 있다 (WO만 대상)
+  if(String(type||'').toUpperCase()==='WO'){
+    const overs=[];
+    const simulated=[...(ward.leaveRequests||[])];
+    leaveBasketState.forEach(date=>{
+      const c=checkLeavePolicy({...ward, leaveRequests:simulated}, nurseId, date, 'WO');
+      if(!c.ok) overs.push(`· ${date} — ${c.reason}`);
+      if(!simulated.some(r=>r&&r.nurseId===nurseId&&r.date===date)) simulated.push({nurseId, date, type:'WO'});
+    });
+    if(overs.length && !confirm(`정책 초과입니다. 그래도 등록할까요?\n\n${overs.join('\n')}`)) return;
+  }
   const stamp=Date.now();
   leaveBasketState.forEach((date,idx)=>{
     const existing=(ward.leaveRequests||[]).find(r=>r.nurseId===nurseId && r.date===date);
@@ -6724,7 +6999,7 @@ function collectNightLimitIssues(schedule, ward, y, m){
       lastNightForRecovery=d;
     }
 
-    const gap=typeof stepNightReentryGapDays==='function' ? stepNightReentryGapDays(n) : 0;
+    const gap=typeof stepNightReentryGapDays==='function' ? stepNightReentryGapDays(n, ward) : 0;
     if(gap>0){
       let lastNightDay=null;
       const offset=typeof getPreviousMonthLastNightOffset==='function' ? getPreviousMonthLastNightOffset(ward,n.id,y,m) : -999;
@@ -6739,7 +7014,7 @@ function collectNightLimitIssues(schedule, ward, y, m){
           continue;
         }
         if(lastNightDay!==null && (d-lastNightDay)<=gap){
-          issues.push(`${makeDateKey(y,m,d)} ${n.name} N 재진입 텀 부족 (${d-lastNightDay}/${gap+1}일 간격 필요)`);
+          issues.push(`${makeDateKey(y,m,d)} ${n.name} N 재진입 텀 부족 (${d-lastNightDay}/${gap+1}일 간격 필요 · ${nightReentryGapSourceLabel(ward)} ${gap}일)`);
         }
         lastNightDay=d;
       }
@@ -6857,11 +7132,11 @@ function collectAbsoluteScheduleViolations(schedule, ward, y, m){
       const code=absoluteScheduleCode(schedule,y,m,d,n.id);
       if(absoluteIsWorkCode(code)) add('prevNightRecovery',`${makeDateKey(y,m,d)} ${n.name} 전월 N후 OFF 연속성 위반 (${code})`,{day:d,nurseId:n.id,shift:code});
     }
-    const gap=typeof stepNightReentryGapDays==='function' ? stepNightReentryGapDays(n) : 0;
+    const gap=typeof stepNightReentryGapDays==='function' ? stepNightReentryGapDays(n, ward) : 0;
     if(gap>0){
       let lastNight=getPreviousMonthLastNightOffset(ward,n.id,y,m);
       blocks.forEach(b=>{
-        if(lastNight!==-999 && (b.start-lastNight)<=gap) add('nightReentryGap',`${makeDateKey(y,m,b.start)} ${n.name} N 재진입 텀 부족 (${b.start-lastNight}/${gap+1}일 간격 필요)`,{day:b.start,nurseId:n.id});
+        if(lastNight!==-999 && (b.start-lastNight)<=gap) add('nightReentryGap',`${makeDateKey(y,m,b.start)} ${n.name} N 재진입 텀 부족 (${b.start-lastNight}/${gap+1}일 간격 필요 · ${nightReentryGapSourceLabel(ward)} ${gap}일)`,{day:b.start,nurseId:n.id});
         lastNight=b.end;
       });
     }
@@ -6912,9 +7187,9 @@ function collectAbsoluteScheduleViolations(schedule, ward, y, m){
 }
 function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
   if(!schedule||!ward) return {removed:0, fixed:0, issues:[], unresolved:[]};
-  // reportOnly: 수동 작성/업로드 근무표 저장·불러오기용 — 위반을 집계만 하고 원본 근무표는 고치지 않음
+  // reportOnly: 수동 작성/업로드 근무표 저장·불러오기용 — 대원칙 5조(근무유형·개인조건)만 실제로 비우고,
+  // 나머지 규칙(전이·연속·인원)은 집계만 한다 (2026-09 결정. 사본 복제는 5조 처리 뒤에 한다)
   const reportOnly=!!opts.reportOnly;
-  if(reportOnly) schedule=cloneJson(schedule);
   // 수간호사/관리(HN)는 인원 산정 제외 — 검증·교정 대상에서 빼서 선기입 셀을 보존한다
   const nurses=(ward.nurses||[]).filter(n=>n&&n.employmentStatus!=='leave'&&n.employmentStatus!=='inactive'&&!isHeadNurseExcluded(n));
   const last=daysInMonth(y,m);
@@ -6948,7 +7223,8 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
     });
     return changed;
   }
-  function repairHardPlacementAndTransitions(){
+  // 대원칙 5조(근무유형·개인조건)와 전이 규칙(2·3조)을 분리 — reportOnly에서도 5조는 실제로 지운다
+  function repairHardPlacement(){
     let changed=0;
     for(let d=1; d<=last; d++){
       nurses.forEach(n=>{
@@ -6956,6 +7232,10 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
         if(absoluteIsWorkCode(cur) && !hardPlacementAllowedForNurse(n,cur,y,m,d)) changed += removeWork(n,d,'근무유형/개인조건 위반')?1:0;
       });
     }
+    return changed;
+  }
+  function repairTransitions(){
+    let changed=0;
     for(let d=1; d<=last; d++){
       nurses.forEach(n=>{
         const cur=code(n,d);
@@ -6980,11 +7260,11 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
         if(maxNs>0 && b.len>maxNs){ for(let d=b.start+maxNs; d<=b.end; d++) changed += removeWork(n,d,'연속 N 최대 초과')?1:0; }
       });
       blocks=absoluteNightBlocksForNurse(schedule,ward,n,y,m);
-      const gap=typeof stepNightReentryGapDays==='function' ? stepNightReentryGapDays(n) : 0;
+      const gap=typeof stepNightReentryGapDays==='function' ? stepNightReentryGapDays(n, ward) : 0;
       let lastNight=getPreviousMonthLastNightOffset(ward,n.id,y,m);
       blocks.forEach(b=>{
         if(gap>0 && lastNight!==-999 && (b.start-lastNight)<=gap){
-          for(let d=b.start; d<=b.end; d++) changed += removeWork(n,d,'N 재진입 텀 부족')?1:0;
+          for(let d=b.start; d<=b.end; d++) changed += removeWork(n,d,`N 재진입 텀 부족(${nightReentryGapSourceLabel(ward)} ${gap}일)`)?1:0;
         }
         lastNight=b.end;
       });
@@ -7047,10 +7327,17 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
   // 예전에는 하드로 강제해 신규 근무를 OF로 지웠고, 억지로 맞춘 근무가 다시
   // 전이·인원 규칙에 걸려 같은 칸을 반복 제거·복원했다.
   // 동반 배치는 V2 생성 단계가 맡고, 어긋난 날은 preceptorMirror 경고로 안내한다.
+  // reportOnly: 5조(근무유형·개인조건) 위반은 원본에서 실제로 비운 뒤, 나머지 검사는 사본에서 집계만 한다.
+  let removedHard=0;
+  if(reportOnly){
+    removedHard=repairHardPlacement();
+    schedule=cloneJson(schedule);
+  }
   for(let guard=0; guard<8; guard++){
     let changed=0;
     changed+=restoreProtected();
-    changed+=repairHardPlacementAndTransitions();
+    changed+=repairHardPlacement();
+    changed+=repairTransitions();
     changed+=repairNightRules();
     changed+=repairConsecutiveWork();
     changed+=repairSkillMixAndMax();
@@ -7058,15 +7345,16 @@ function enforceAbsoluteScheduleValidator(schedule, ward, y, m, opts={}){
     if(!changed) break;
   }
   const unresolved=collectAbsoluteScheduleViolations(schedule,ward,y,m).map(x=>x.message);
-  // reportOnly는 화면 표기를 가른다: 자동생성은 "삭제함", 수동 편집 저장은 "의심(그대로 저장)".
-  const result={removed,fixed,details:[...new Set(details)],issues:unresolved,unresolved,reportOnly};
+  // reportOnly는 화면 표기를 가른다: 자동생성은 "삭제함", 수동 편집 저장은
+  // "5조 위반은 비움(저장 반영) · 나머지는 의심(그대로 저장)".
+  const result={removed,fixed,removedHard,details:[...new Set(details)],issues:unresolved,unresolved,reportOnly};
   try{
     if(stepGenerationState) stepGenerationState.finalValidation=result;
     if(typeof resultCache==='object' && resultCache) resultCache.finalValidation=result;
   }catch(e){}
   if((removed||fixed) && opts.source && typeof stepLog==='function'){
     stepLog(reportOnly
-      ? `${opts.source} 절대검증기: 규칙위반 의심 ${removed}건, 보호휴무/동반근무 불일치 ${fixed}건 발견 (근무표는 수정하지 않음)${unresolved.length?`, 기타 ${unresolved.length}건`:''}`
+      ? `${opts.source} 절대검증기: 근무유형/개인조건 위반 ${removedHard}건 비움(저장 반영), 그 외 위반 의심 ${removed-removedHard}건, 보호휴무/동반근무 불일치 ${fixed}건 (그대로 저장)${unresolved.length?`, 기타 ${unresolved.length}건`:''}`
       : `${opts.source} 절대검증기: 규칙위반 배치 제거 ${removed}건, 보호휴무/동반근무 복원 ${fixed}건${unresolved.length?`, 미해결 ${unresolved.length}건`:''}`);
   }
   return result;
@@ -7490,6 +7778,19 @@ function getAvailableScheduleCodes(){
 function updateScheduleCellDraft(wardId,y,m,dateKey,nurseId,val){
   const key=getScheduleDraftKey(wardId,y,m);
   if(!scheduleDraftState[key]) return;
+  // 대원칙 5조(근무유형·개인조건)는 수동 입력에서도 하드 차단 (2026-09 결정 — 나머지 조는 집계만)
+  // 수간호사/관리는 절대검증기와 같은 기준으로 제외해 선기입 관행을 보존한다.
+  const code=String(val||'').toUpperCase();
+  if(code && isHardPlacementWorkCode(code)){
+    const ward=getWardById(wardId);
+    const n=(ward?.nurses||[]).find(x=>String(x.id)===String(nurseId));
+    const d=Number(String(dateKey).slice(8,10));
+    if(n && !isHeadNurseExcluded(n) && !hardPlacementAllowedForNurse(n,code,y,m,d)){
+      alert(`대원칙 5조 위반으로 입력할 수 없습니다.\n${hardPlacementViolationText(n,code,y,m,d)}`);
+      renderApp(); // 셀 선택값을 원래대로 되돌린다
+      return;
+    }
+  }
   if(!scheduleDraftState[key].schedule[dateKey]) scheduleDraftState[key].schedule[dateKey]={};
   scheduleDraftState[key].schedule[dateKey][nurseId]=val;
 }
@@ -7571,10 +7872,20 @@ function stepPushDraft(){
   const finalValidation=typeof enforceAbsoluteScheduleValidator==='function' ? enforceAbsoluteScheduleValidator(st.schedule,ward,st.y,st.m,{source:'단계종료'}) : {issues:[]};
   const draft=ensureScheduleDraft(ward,uiYear,uiMonth); draft.schedule=cloneJson(st.schedule); draft.edit=false; resultCache={schedule:cloneJson(st.schedule),warnings:[],stats:summarizeSchedule(st.schedule,ward.nurses||[],uiYear,uiMonth),targetOff:getRegularMonthlyOffTarget(ward,uiYear,uiMonth),baseOff:getBaseOffTargetForMonth(ward,uiYear,uiMonth),addOff:0,finalValidation};
 }
-function stepNightReentryGapDays(n){
-  // 전체관리자 > 근무유형의 'N 텀 최소' 값을 3단계/단계별 생성에도 하드제약으로 적용합니다.
+function stepNightReentryGapDays(n, ward){
+  // 나이트킵은 병동 값과 무관하게 항상 0 — 묶음 사이 간격은 회복 OFF·연속 OFF 최대가 담당.
+  if(typeof isNightKeepNurse==='function' && isNightKeepNurse(n)) return 0;
+  // 병동 설정(ward.nightReentryGap)이 있으면 그 값(0 = 텀 없음), 없으면 근무유형의 'N 텀 최소'.
+  if(ward && ward.nightReentryGap!==undefined && ward.nightReentryGap!==null && ward.nightReentryGap!==''){
+    const wv=Number(ward.nightReentryGap);
+    if(Number.isFinite(wv)) return Math.max(0, Math.floor(wv));
+  }
   const rule=(typeof getPrimaryWorkTypeRule==='function' ? getPrimaryWorkTypeRule(n) : {}) || {};
   return Math.max(0, Number(rule.nightReentryGap||0));
+}
+// 점검·진단 문구에 적용값 출처를 표기하기 위한 라벨
+function nightReentryGapSourceLabel(ward){
+  return (ward && ward.nightReentryGap!==undefined && ward.nightReentryGap!==null && ward.nightReentryGap!=='') ? '병동 설정' : '근무유형 기본값';
 }
 function stepPreviousNightStreakBeforeDay(n,d){
   const st=stepEnsureState(), ward=getCurrentWard(); if(!st||!ward) return 0;
@@ -11661,6 +11972,23 @@ function validateScheduleRequirements(){
     }
   }
 
+  // 7. 개인조건 ↔ 대원칙 충돌 — 충돌이 남아 있으면 생성이 실패할 수밖에 없으므로 수간호사가 고쳐야 넘어간다
+  if(typeof personalConditionConflicts==='function'){
+    active.forEach(n=>{
+      const cs=personalConditionConflicts(ward,n,null);
+      if(cs.length){
+        errors.push(`❌ 개인조건이 대원칙과 충돌합니다: ${n.name} — ${cs.map(c=>c.reason).join(' / ')}\n   → 근무자 명단·조건설정에서 빨갛게 표시된 항목을 고쳐 주세요.`);
+      }
+    });
+  }
+  // 7-1. 시니어(LV3) 0명 — 배정이 검증 단계에서 전량 삭제되므로 생성 전에 막는다 (대원칙 7조)
+  if(hasStaffingRules && typeof isNurseSeniorSupport==='function'){
+    const counted=active.filter(n=>!isHeadNurseExcluded(n)&&!isUnifiedNewNurse(n));
+    if(counted.length && !counted.some(isNurseSeniorSupport)){
+      errors.push('❌ 시니어(LV3)가 한 명도 없습니다. 모든 듀티에 시니어 1명 이상이 필요해(대원칙 7조) 배정이 전부 삭제됩니다.\n   → 근무자 명단에서 구분을 "LV3 시니어"로 올릴 인원을 최소 1명 지정해 주세요.');
+    }
+  }
+
   return errors;
 }
 
@@ -12177,19 +12505,20 @@ function renderGenerateSummary(){
 
 /* ── 절대검증기가 지운(또는 지웠어야 할) 배치를 사유와 함께 보여준다 ──
    대원칙: 자동생성은 위반 셀을 삭제하고 그 이유를 알린다.
-   수동 편집 저장은 대원칙을 강제하지 않으므로(reportOnly) "의심"으로 표기하고
-   근무표는 건드리지 않았음을 분명히 한다. */
+   수동 편집 저장(reportOnly)은 5조(근무유형·개인조건) 위반만 실제로 비우고,
+   나머지 조(전이·연속·인원)는 "의심"으로 표기만 하고 근무표는 건드리지 않는다. */
 function renderAbsoluteRemovalPanel(){
   const fv=(typeof resultCache==='object' && resultCache && resultCache.finalValidation)
     || (typeof stepGenerationState==='object' && stepGenerationState && stepGenerationState.finalValidation)
     || null;
   if(!fv || !Array.isArray(fv.details) || !fv.details.length) return '';
   const reportOnly=!!fv.reportOnly;
+  const hardCleared=Number(fv.removedHard||0);
   const title=reportOnly
-    ? `대원칙 위반 의심 ${fv.details.length}건 — 근무표는 그대로 저장되었습니다`
+    ? `대원칙 점검 ${fv.details.length}건${hardCleared?` — 근무유형/개인조건 위반 ${hardCleared}건은 비웠습니다`:' — 근무표는 그대로 저장되었습니다'}`
     : `대원칙 위반으로 삭제된 배치 ${fv.details.length}건`;
   const note=reportOnly
-    ? '손으로 수정한 근무표에는 대원칙을 강제하지 않습니다. 아래 항목을 직접 확인해 주세요.'
+    ? `근무유형·개인조건(5조)에 없는 근무는 수동 입력이라도 OFF로 비웁니다.${hardCleared?'':' (이번 저장에는 해당 없음)'} 그 외 규칙(전이·연속·인원)은 강제하지 않으니 아래 항목을 직접 확인해 주세요.`
     : '아래 배치는 대원칙에 어긋나 OFF로 바뀌었습니다.';
   const rows=fv.details.map(x=>`<div style="padding:3px 0">${escapeHtml(x)}</div>`).join('');
   return `<details style="margin-top:8px;border:1px solid #f0c9a0;background:#fff8f0;border-radius:12px;padding:12px 14px">
@@ -12238,8 +12567,11 @@ function renderScheduleTable(ward,schedule,stats,editable=false){
     for(let d=1;d<=dayCount;d++){
       const key=makeDateKey(uiYear,uiMonth,d), code=schedule[key]?.[n.id]||'';
       if(editable){
-        const extraOpt=(code && !codeOptions.includes(code))?`<option value="${code}" selected>${escapeHtml(code)}</option>`:'';
-        html+=`<td class="schedule-code-cell"><select class="schedule-cell-select" onchange="updateScheduleCellDraft('${ward.id}',${uiYear},${uiMonth},'${key}','${n.id}',this.value)"><option value=""></option>${extraOpt}${codeOptions.map(c=>`<option value="${c}" ${c===code?'selected':''}>${c}</option>`).join('')}</select></td>`;
+        // 대원칙 5조 — 그 직원이 그날 설 수 없는 근무코드는 선택지에서 뺀다 (기존 저장값은 extraOpt로 보이게 유지)
+        // 수간호사/관리는 검증기와 같은 기준으로 제외 (선기입 보존)
+        const cellOptions=isHeadNurseExcluded(n) ? codeOptions : codeOptions.filter(c=>!isHardPlacementWorkCode(String(c).toUpperCase())||hardPlacementAllowedForNurse(n,c,uiYear,uiMonth,d));
+        const extraOpt=(code && !cellOptions.includes(code))?`<option value="${code}" selected>${escapeHtml(code)}</option>`:'';
+        html+=`<td class="schedule-code-cell"><select class="schedule-cell-select" onchange="updateScheduleCellDraft('${ward.id}',${uiYear},${uiMonth},'${key}','${n.id}',this.value)"><option value=""></option>${extraOpt}${cellOptions.map(c=>`<option value="${c}" ${c===code?'selected':''}>${c}</option>`).join('')}</select></td>`;
       } else {
         html+=`<td class="schedule-code-cell">${escapeHtml(code)}</td>`;
       }
@@ -12793,6 +13125,20 @@ function canAssign(nurse, day, shift, state, ward, y, m, opts = {}) {
   }
   if (workStreak + 1 + fwdWorkStreak > maxConsec) return false;
 
+  // 7-b. 듀티별 최대 인원 초과 금지 (대원칙 8조) — 지금까지 개별 phase에만 있어
+  //      교정 단계의 이동이 최대를 넘길 수 있었다. 단일 게이트로 통일 (신규는 정원 외).
+  if (['D', 'E', 'N'].includes(S)) {
+    const maxStaff = getStaffingMaxForDate(ward, y, m, day, S);
+    if (maxStaff !== Infinity) {
+      const cnt = (ward.nurses || []).filter(x =>
+        x.id !== nurse.id &&
+        x.employmentStatus !== 'leave' && x.employmentStatus !== 'inactive' &&
+        stepIsCountedStaff(x) && state.get(x.id, day) === S
+      ).length;
+      if (stepIsCountedStaff(nurse) && cnt >= maxStaff) return false;
+    }
+  }
+
   // 8. N 월 최대 개수 초과 (Rule 2)
   // 나이트킵은 개인 설정(maxNightPerMonth=0 등) 무시, 월 목표치 사용
   if (S === 'N') {
@@ -12834,7 +13180,7 @@ function canAssign(nurse, day, shift, state, ward, y, m, opts = {}) {
   //     검증기(repairNightRules)가 같은 규칙으로 셀을 지우므로, 엔진이 애초에 만들지 않아야
   //     생성 직후 나이트가 통째로 삭제되는 일이 없다. 묶음 확장(전날이 N)은 연속 N 규칙이 담당.
   if (S === 'N' && prev1 !== 'N') {
-    const reGap = typeof stepNightReentryGapDays === 'function' ? stepNightReentryGapDays(nurse) : 0;
+    const reGap = typeof stepNightReentryGapDays === 'function' ? stepNightReentryGapDays(nurse, ward) : 0;
     if (reGap > 0) {
       let prevNightEnd = null;
       for (let d = day - 1; d >= 1; d--) {
@@ -12926,6 +13272,16 @@ function scoreAssignment(nurse, day, shift, state, ward, y, m) {
       ).length;
       if (seniorsOn < seniorPol.min) score += SCORE_WEIGHTS.seniorMixNeeded;
       else if (seniorsOn + 1 > seniorPol.max) score += SCORE_WEIGHTS.seniorMixExcess;
+    }
+  }
+
+  // 신규-프리셉터 동반 배치 (소프트 4층): 프리셉터가 그날 같은 코드면 보너스, 다른 근무면 페널티
+  if (typeof isTraineeNurse === 'function' && isTraineeNurse(nurse)) {
+    const p = typeof findPreceptorForTrainee === 'function' ? findPreceptorForTrainee(nurses, nurse) : null;
+    if (p) {
+      const pCode = String(state.get(p.id, day) || '').toUpperCase();
+      if (pCode === S) score += SCORE_WEIGHTS.preceptorPair;
+      else if (['D', 'E', 'N', 'MD', 'SD6'].includes(pCode)) score += SCORE_WEIGHTS.preceptorMismatch;
     }
   }
 
@@ -13282,7 +13638,7 @@ function planNightBlock(nurse, fromDay, blockSize, state, ward, y, m) {
    지금까지 절대검증기에만 있어서, 엔진이 위반을 만들고 검증기가 지우는 낭비가 있었다.
    블록 플래너의 공통 관문에서 미리 막는다 (CLAUDE.md 엔진 불변식). */
 function _nightReentryGapOK(nurse, start, end, state, ward, y, m) {
-  const gap = (typeof stepNightReentryGapDays === 'function') ? stepNightReentryGapDays(nurse) : 0;
+  const gap = (typeof stepNightReentryGapDays === 'function') ? stepNightReentryGapDays(nurse, ward) : 0;
   if (gap <= 0) return true;
   const last = daysInMonth(y, m);
 
@@ -13372,6 +13728,21 @@ function _nightRecoverySlotsFree(nurse, endDay, state, ward, y, m) {
   return true;
 }
 
+// 비시니어가 이 구간의 N에 합류해도 되는가 — 시니어 없는 기존 N 무리에 합류하면
+// 절대검증기(대원칙 7조)가 그날 N을 통째로 지우므로, 합류 자체가 낭비다.
+// (차지가능=시니어 판정이 동일하므로, 시니어 없는 날 = phase3a가 커버하지 못한 날)
+function _nightSeniorJoinOK(nurse, dayStart, dayEnd, state, ward) {
+  if (isNurseSeniorSupport(nurse)) return true;
+  const nurses = (ward.nurses || []).filter(n =>
+    n.employmentStatus !== 'leave' && n.employmentStatus !== 'inactive'
+  );
+  for (let d = dayStart; d <= dayEnd; d++) {
+    const onN = nurses.filter(x => x.id !== nurse.id && state.get(x.id, d) === 'N');
+    if (onN.length && !onN.some(isNurseSeniorSupport)) return false;
+  }
+  return true;
+}
+
 // N 수요 인식 블록 배치: fromDay 이후 후보 중 N 부족 점수 가장 높은 위치 선택
 function planNightBlockBestFit(nurse, fromDay, blockSize, state, ward, y, m) {
   const last      = daysInMonth(y, m);
@@ -13394,6 +13765,8 @@ function planNightBlockBestFit(nurse, fromDay, blockSize, state, ward, y, m) {
     }
     if (valid && !_nightRecoverySlotsFree(nurse, start + blockSize - 1, state, ward, y, m)) valid = false;
     if (valid && !_blockStreakOK(nurse, start, blockSize, state, ward, y, m)) valid = false;
+    // 대원칙 7조 사전 가드 — 비시니어가 시니어 없는 기존 N 무리에 합류하는 위치는 제외
+    if (valid && !_nightSeniorJoinOK(nurse, start, start + blockSize - 1, state, ward)) valid = false;
     if (valid) candidates.push({ start, demandScore });
   }
   if (!candidates.length) return null;
@@ -13619,11 +13992,13 @@ function phase3_placeGeneralNightBlocks(state, ward, y, m) {
   const chargeList   = nurses.filter(n => isChargeCapable(n));
   const groupBOffset = Math.ceil(chargeList.length / 2); // B그룹 시작 인덱스
 
+  // 직원별 배치 상태 초기화 (Phase 2b 선점 블록 반영)
+  const maxCycles = 3; // 소프트 규칙: 2사이클 목표, 3사이클까지 허용
+  const stMap = new Map();
   for (const nurse of nurses) {
     const minN      = Math.max(1, getNurseNumberSetting(nurse, 'minConsecutiveNight', data.commonScheduleSettings?.defaultMinConsecutiveNight ?? 2));
     const maxN      = Math.max(minN, getNurseNumberSetting(nurse, 'maxConsecutiveNight', data.commonScheduleSettings?.defaultMaxConsecutiveNight ?? 3));
     const maxNight  = getNurseNumberSetting(nurse, 'maxNightPerMonth', data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6);
-    const maxCycles = 3; // 소프트 규칙: 2사이클 목표, 3사이클까지 허용
     const isCharge  = isChargeCapable(nurse);
 
     // B그룹 차지가능자는 첫 사이클도 1/3 지점부터 시작
@@ -13631,7 +14006,6 @@ function phase3_placeGeneralNightBlocks(state, ward, y, m) {
     const isGroupB   = isCharge && chargeIdx >= groupBOffset;
     const initFromDay = isGroupB ? thirdDay : 1;
 
-    // Phase 2b 선점 블록을 반영해 시작값 초기화
     let nightAssigned = 0;
     for (let d = 1; d <= last; d++) { if (state.get(nurse.id, d) === 'N') nightAssigned++; }
     let cycleCount = _countNightBlocks(nurse, state, last);
@@ -13642,28 +14016,44 @@ function phase3_placeGeneralNightBlocks(state, ward, y, m) {
       for (let d = 1; d <= last; d++) { if (state.get(nurse.id, d) === 'N') lastN = d; }
       fromDay = Math.max(fromDay, lastN + restDays + 1);
     }
+    stMap.set(nurse.id, { minN, maxN, maxNight, isCharge, nightAssigned, cycleCount, fromDay });
+  }
 
-    while (nightAssigned < maxNight && fromDay <= last && cycleCount < maxCycles) {
-      const remaining = maxNight - nightAssigned;
-      // 남은 할당량이 최소블록 미만이면 더 배정하면 초과 → 중단
-      if (remaining < minN) break;
-      const trySize = Math.min(maxN, remaining); // remaining 상한으로 초과 방지
+  // 라운드 방식 — 직원 순서대로 상한까지 채우면 뒤 순서 직원은 자리가 없으므로,
+  // 매 라운드 모든 직원에게 블록 1개씩(현재 N 개수 적은 순) 부여해 공평하게 배분한다.
+  let progress = true;
+  while (progress) {
+    progress = false;
+    // N 개수 적은 순, 동수면 차지(시니어) 먼저 — 시니어 커버가 먼저 깔려야 비시니어 블록이 낭비되지 않는다
+    const order = nurses.slice().sort((a, b) =>
+      (stMap.get(a.id).nightAssigned - stMap.get(b.id).nightAssigned) ||
+      ((isChargeCapable(b) ? 1 : 0) - (isChargeCapable(a) ? 1 : 0)));
+    for (const nurse of order) {
+      const s = stMap.get(nurse.id);
+      if (s.nightAssigned >= s.maxNight || s.fromDay > last || s.cycleCount >= maxCycles) continue;
+      const remaining = s.maxNight - s.nightAssigned;
+      // 남은 할당량이 최소블록 미만이면 더 배정하면 초과 → 종료
+      if (remaining < s.minN) { s.fromDay = last + 1; continue; }
+      const trySize = Math.min(s.maxN, remaining); // remaining 상한으로 초과 방지
 
       // 차지가능자: 2사이클째부터 월 중반 이후 배치 (전반/후반 분산)
-      const searchFrom = (isCharge && cycleCount >= 1)
-        ? Math.max(fromDay, midMonth)
-        : fromDay;
+      const searchFrom = (s.isCharge && s.cycleCount >= 1)
+        ? Math.max(s.fromDay, midMonth)
+        : s.fromDay;
 
       let block = planNightBlockBestFit(nurse, searchFrom, trySize, state, ward, y, m);
-      if (!block && trySize > minN) {
-        block = planNightBlockBestFit(nurse, searchFrom, minN, state, ward, y, m);
+      // 연속 N 최소가 1이어도 크기 1 블록은 잔여 쿼터가 1일 때만 — 단일 N 남발 방지 (항목 7)
+      const fallbackSize = (s.minN < 2 && remaining > 1) ? 2 : s.minN;
+      if (!block && trySize > fallbackSize) {
+        block = planNightBlockBestFit(nurse, searchFrom, fallbackSize, state, ward, y, m);
       }
-      if (!block) break;
+      if (!block) { s.fromDay = last + 1; continue; } // 더 놓을 자리 없음 — 이후 라운드 제외
 
       assignNightBlock(nurse, block, restDays, state, ward, y, m);
-      nightAssigned += block.endDay - block.startDay + 1;
-      cycleCount++;
-      fromDay = block.endDay + restDays + 1;
+      s.nightAssigned += block.endDay - block.startDay + 1;
+      s.cycleCount++;
+      s.fromDay = block.endDay + restDays + 1;
+      progress = true;
     }
   }
 }
@@ -13798,6 +14188,7 @@ function _fillOneNightCell(day, pool, state, ward, y, m) {
       if (state.isLocked(nurse.id, day)) continue;
       if (!canAssign(nurse, day, 'N', state, ward, y, m)) continue;
       if (!_nightReentryGapOK(nurse, day, day, state, ward, y, m)) continue;
+      if (!_nightSeniorJoinOK(nurse, day, day, state, ward)) continue; // 7조 사전 가드
       state.assign(nurse.id, day, 'N', 'fillNightCell_extend');
       return true;
     }
@@ -13817,6 +14208,31 @@ function _fillOneNightCell(day, pool, state, ward, y, m) {
     if (quotaMax - curTotalN < minSize) continue;
     const block = planNightBlock(nurse, Math.max(1, day - minSize + 1), minSize, state, ward, y, m);
     if (!block || block.startDay > day || block.endDay < day) continue;
+    if (!_nightSeniorJoinOK(nurse, block.startDay, block.endDay, state, ward)) continue; // 7조 사전 가드
+    assignNightBlock(nurse, block, restDays, state, ward, y, m);
+    return true;
+  }
+
+  // 전략3 (최후): 이미 2개 이상 묶음을 1개 이상 가진 직원의 잔여 쿼터가 정확히 1이면
+  // 크기 1 블록을 허용한다 — 수간호사 관행 2+2+1 (홀수 상한의 마지막 1개).
+  // 회복 OFF·재진입 텀·연속근무·최대인원은 planNightBlock이 그대로 검사한다.
+  for (const nurse of sorted) {
+    if (isNightKeepNurse(nurse)) continue;
+    if (_countNightBlocks(nurse, state, last) >= 3) continue; // 사이클 3회 상한 유지
+    let run = 0, has2Block = false, curTotalN = 0;
+    for (let d = 1; d <= last + 1; d++) {
+      const isN = d <= last && state.get(nurse.id, d) === 'N';
+      if (isN) { run++; curTotalN++; }
+      else { if (run >= 2) has2Block = true; run = 0; }
+    }
+    if (!has2Block) continue; // 크기 2+ 묶음 없이 단일 N부터 만들지 않는다
+    const quotaMax = getNurseNumberSetting(nurse, 'maxNightPerMonth', data.commonScheduleSettings?.defaultMaxNightPerMonth ?? 6);
+    if (quotaMax - curTotalN !== 1) continue; // 잔여 쿼터가 정확히 1일 때만
+    // 대원칙 7조 사전 가드 — 시니어 없는 N에 비시니어의 마지막 1개를 얹으면 검증기가 그날 N을 통째로 지운다
+    if (!isNurseSeniorSupport(nurse) &&
+        !allNurses.some(x => state.get(x.id, day) === 'N' && isNurseSeniorSupport(x))) continue;
+    const block = planNightBlock(nurse, day, 1, state, ward, y, m);
+    if (!block || block.startDay !== day) continue;
     assignNightBlock(nurse, block, restDays, state, ward, y, m);
     return true;
   }
@@ -13926,6 +14342,13 @@ function _phase3d_relocateOnce(state, ward, y, m) {
 
           const nb = planNightBlock(nurse, Math.max(1, day - size + 1), size, state, ward, y, m);
           let ok = !!(nb && nb.startDay <= day && nb.endDay >= day);
+          // 대원칙 7조 사전 가드 — 비시니어 블록을 시니어 없는 N 날짜로 옮기면
+          // 검증기가 그날 N을 통째로 지우므로(엔진 결함이 됨) 그 이동은 하지 않는다
+          if (ok && !isNurseSeniorSupport(nurse)) {
+            for (let d2 = nb.startDay; d2 <= nb.endDay && ok; d2++) {
+              if (!nurses.some(x => x.id !== nurse.id && state.get(x.id, d2) === 'N' && isNurseSeniorSupport(x))) ok = false;
+            }
+          }
           if (ok) {
             assignNightBlock(nurse, nb, restDays, state, ward, y, m);
             // 비워진 원래 날짜들을 쿼터 남은 간호사로 재충원 (연쇄 이동)
@@ -14421,33 +14844,37 @@ function phase6b_rebalanceOffFairness(state, ward, y, m) {
     const aCode = state.get(A.id, day);
     if (aCode !== '' && !(aCode === 'OF' && !state.isLocked(A.id, day))) return false;
 
-    // A쪽 검증 (A 셀을 비운 상태 기준으로 canAssign)
+    // A쪽 검증 — B를 먼저 빼고(net-neutral 이동 기준) A 셀을 비운 상태로 canAssign.
+    // canAssign에 8조(최대인원) 게이트가 생겨, B가 남은 채 검사하면 이동이 항상 초과로 거부된다.
     const hadOF = aCode === 'OF';
     if (hadOF) state.clear(A.id, day, 'p6b_probe');
+    state.clear(B.id, day, 'p6b_probe');
+    const revert = () => {
+      state.assign(B.id, day, shift, 'p6b_probe_restore');
+      if (hadOF) state.assign(A.id, day, 'OF', 'p6b_probe_restore');
+    };
     const okA = canAssign(A, day, shift, state, ward, y, m);
-    if (!okA) { if (hadOF) state.assign(A.id, day, 'OF', 'p6b_probe_restore'); return false; }
+    if (!okA) { revert(); return false; }
 
     // 차지 유지: B가 유일한 차지가능자였다면 A도 차지가능해야 함
     const others = nurses.filter(n => n.id !== B.id && n.id !== A.id && state.get(n.id, day) === shift);
     if (isChargeCapable(B) && !others.some(isChargeCapable) && !isChargeCapable(A)) {
-      if (hadOF) state.assign(A.id, day, 'OF', 'p6b_probe_restore');
+      revert();
       return false;
     }
 
     // 시니어/일반 유지: B가 유일한 LV3+였다면 A도 LV3+여야 함 (Rule 8 — 주니어만 배치 방지)
     if (getNurseSkillRank(B) >= 3 && !others.some(n => getNurseSkillRank(n) >= 3) && getNurseSkillRank(A) < 3) {
-      if (hadOF) state.assign(A.id, day, 'OF', 'p6b_probe_restore');
+      revert();
       return false;
     }
 
     // B의 빠진 자리가 만드는 OFF런이 B의 연속 OFF 범위 안인지
-    state.clear(B.id, day, 'p6b_probe');
     const run = offRunIfFree(B, day);
     const bMin = minOffOf(B), bMax = maxOffOf(B);
     const runOK = (bMin <= 0 || run.len >= bMin || run.touchesEdge) && (bMax <= 0 || run.len <= bMax);
     if (!runOK) {
-      state.assign(B.id, day, shift, 'p6b_probe_restore');
-      if (hadOF) state.assign(A.id, day, 'OF', 'p6b_probe_restore');
+      revert();
       return false;
     }
 
@@ -14800,6 +15227,77 @@ function phase6f_backfillSeniorReservedSlots(state, ward, y, m) {
   }
 }
 
+/* ── Phase 6h: 신규-프리셉터 동반 배치 (소프트 4층) ────────────────
+   신규(isTraineeNurse)를 지정 프리셉터와 같은 듀티로 정렬한다.
+   - 프리셉터가 D/E면 canAssign 통과 시 같은 코드로 재배정
+   - 프리셉터가 휴무면 신규도 OF (신규 본인의 WO·휴가·회복 OFF 잠금은 따라가지 않음)
+   - N은 낱개 배정 금지 — 프리셉터 N 블록과 같은 구간에 planNightBlock으로
+     블록을 놓을 수 있을 때만, 실패 시 snapshot 복구
+   - 하드 규칙에 걸리면 건너뜀 (소프트 규칙: 억지로 맞추지 않는다) ── */
+function phase6h_alignTraineeWithPreceptor(state, ward, y, m) {
+  const last     = daysInMonth(y, m);
+  const restDays = getWardNightRestDays(ward);
+  const nurses   = (ward.nurses || []).filter(n =>
+    n.employmentStatus !== 'leave' && n.employmentStatus !== 'inactive'
+  );
+  const PROTECTED = ['WO', 'AL', 'SL', 'HA', 'HP', '교육', '공가'];
+  const trainees  = nurses.filter(n => typeof isTraineeNurse === 'function' && isTraineeNurse(n));
+
+  for (const t of trainees) {
+    const p = typeof findPreceptorForTrainee === 'function' ? findPreceptorForTrainee(nurses, t) : null;
+    if (!p) continue;
+    const tAllowed = getAllowedCodes(t).map(c => String(c).toUpperCase());
+
+    // 1) 프리셉터 N 블록 정렬 — 같은 구간에 블록을 놓을 수 있을 때만 (블록 단위 원칙)
+    if (tAllowed.includes('N')) {
+      let s = 0;
+      for (let d = 1; d <= last + 1; d++) {
+        const isN = d <= last && String(state.get(p.id, d) || '').toUpperCase() === 'N';
+        if (isN && !s) s = d;
+        else if (!isN && s) {
+          const e = d - 1;
+          // 신규가 그 구간에 이미 N이 하나라도 있으면 이미 (부분)정렬 — 건드리지 않는다
+          let hasN = false, blocked = false;
+          for (let x = s; x <= e; x++) {
+            const c = String(state.get(t.id, x) || '').toUpperCase();
+            if (c === 'N') hasN = true;
+            if (state.isLocked(t.id, x) || PROTECTED.includes(c)) blocked = true;
+          }
+          if (!hasN && !blocked) {
+            const snap = state.snapshot();
+            let ok = true;
+            for (let x = s; x <= e; x++) { if (state.get(t.id, x) !== '') { if (!state.clear(t.id, x, 'phase6h_prepN')) { ok = false; break; } } }
+            if (ok) {
+              const blk = planNightBlock(t, s, e - s + 1, state, ward, y, m);
+              if (blk && blk.startDay === s && blk.endDay === e) assignNightBlock(t, blk, restDays, state, ward, y, m);
+              else ok = false;
+            }
+            if (!ok) state.restore(snap);
+          }
+          s = 0;
+        }
+      }
+    }
+
+    // 2) 날짜별 D/E·휴무 정렬 (신규의 N 블록·잠금·보호 휴무는 건드리지 않는다)
+    for (let d = 1; d <= last; d++) {
+      if (state.isLocked(t.id, d)) continue;
+      const tCode = String(state.get(t.id, d) || '').toUpperCase();
+      if (tCode === 'N' || PROTECTED.includes(tCode)) continue;
+      const pCode = String(state.get(p.id, d) || '').toUpperCase();
+      if (['D', 'E'].includes(pCode) && tAllowed.includes(pCode)) {
+        if (tCode === pCode) continue;
+        if (tCode !== '') state.clear(t.id, d, 'phase6h_prep');
+        if (canAssign(t, d, pCode, state, ward, y, m)) state.assign(t.id, d, pCode, 'phase6h_preceptor');
+        else if (tCode !== '') state.assign(t.id, d, tCode, 'phase6h_revert'); // 하드에 걸리면 원래대로 (소프트)
+      } else if (!['D', 'E', 'N', 'MD', 'SD6'].includes(pCode)) {
+        // 프리셉터 휴무(빈칸·O/OF·휴가) → 신규도 OF
+        if (['D', 'E', 'MD', 'SD6'].includes(tCode)) state.assign(t.id, d, 'OF', 'phase6h_offFollow');
+      }
+    }
+  }
+}
+
 function phase7_finalizeRemainingCells(state, ward, y, m) {
   const last   = daysInMonth(y, m);
   const nurses = (ward.nurses || []).filter(n =>
@@ -14879,6 +15377,7 @@ const SchedulerEngine = {
     phase6d_balanceSeniorMix(state, engineWard, y, m);
     phase6e_ensureTeamCoverage(state, engineWard, y, m);
     phase6f_backfillSeniorReservedSlots(state, engineWard, y, m);
+    phase6h_alignTraineeWithPreceptor(state, engineWard, y, m);
     phase7_finalizeRemainingCells(state, engineWard, y, m);
 
     const violations = getViolations(state, engineWard, y, m);

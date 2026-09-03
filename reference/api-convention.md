@@ -39,12 +39,18 @@
   대원칙(패턴 기반): 마지막 N 후 실제 OFF가 1개면 다음날 D 금지(E부터 가능)
 - `nightRestDaysAfterBlockMax`: N 블록 후 회복 OFF **최대** 일수 (0 = 제한 없음, 기본 0).
   초과하지 않게 생성이 근무 복귀를 유도(소프트)하고 초과분은 경고로 표시
+- `nightReentryGap`: N 재진입 텀(일) 병동별 설정 — `null`/노드 없음 = 근무유형의
+  `rule.nightReentryGap`을 따름(하위 호환), 0 = 텀 없음, 1 이상 = 그 일수.
+  읽기는 `stepNightReentryGapDays(n, ward)` 단일 경로. 나이트킵은 이 값과 무관하게 항상 0.
 - `teamPolicy`: 팀별 구성 모드 `{enabled:bool, minPerTeam:{팀:{D,E,N}}}` —
   켜면 교대당 팀별 최소 인원을 보장(소프트)하고 레벨 균형 자동 교정(phase6d)은 꺼짐.
   노드 없으면 미적용(하위 호환)
 - `leavePolicy`: 병동별 원티드 오프 신청 기준 (수간호사 휴가신청 탭에서 설정, 모바일 앱이 신청 시 적용)
   `{applyStart:"YYYY-MM-DD"|"", applyEnd:"YYYY-MM-DD"|"", maxPerDay:number|null, maxPerNurse:number|null, confirmFrom:number|null}`
   — null/빈문자열 = 제한 없음. `confirmFrom`개째부터 모바일 신청 차단(부서장 직접 등록 = 컨펌). 노드가 없으면 무제한(하위 호환).
+  메인 앱 관리자 등록(휴가신청 탭)은 `checkLeavePolicy(ward,nurseId,date,type)`로 검사하되
+  확인창으로 정책을 넘길 수 있고, 모바일(직원 본인)은 확인창 없이 거부. 대상은 WO만.
+  이미 저장된 초과 신청은 수정하지 않고 목록에 "정책 초과" 표시만 한다.
 
 ## 클라이언트별 쓰기 계약
 

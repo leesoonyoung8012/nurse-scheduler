@@ -136,7 +136,4 @@ if [ "$RC" -eq 10 ]; then
 elif [ "$RC" -ne 0 ]; then
   log "오류: 처리 실패 (rc=$RC)"; exit "$RC"
 fi
-# brief가 끝까지 정상 수행된 날만 도장을 찍는다 — AX 관제실이 "16:00 브리핑이 실제로 돌았는가"를
-# 이 파일의 날짜로 판정한다 (2026-09-03 추가, 로그인·다운로드 실패 시에는 위에서 이미 종료됨).
-[ "$MODE" = "brief" ] && date '+%F %T' > "$OUT_DIR/.last-brief" || true
 exit 0
