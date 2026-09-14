@@ -16,10 +16,16 @@
 | `wards[]` | 병동 배열 — 핵심 데이터 |
 | `workTypes[]` | 근무유형 정의 (wt-three, wt-nightkeep, wt-office …) + rule |
 | `commonScheduleSettings` | 전역 기본값 (defaultMaxConsecutiveDays 등) |
-| `shiftCodes` / `placementRules` / `generationRules` | 코드·배치규칙 정의 |
+| `shiftCodes` / `placementRules` / `generationRules` | 코드·배치규칙 정의 — `shiftCodes`의 구 `O`(id c4)는 로드 시 코드만 `OF`로 바뀜(id 유지). `commonScheduleSettings.mdDefaultAppliedAt`은 3교대 MD 개인조건 1회 기본 켜기 완료 표시 |
 | `users`, `globalHolidays`, `changeRequests`, `systemEvents` | 계정·공휴일·요청 |
 
 ## ward 객체 (주요 필드)
+
+- **보조인력 하위 병동 (2026-09-14)**: `parentWardId`(상위 병동 id) + `staffGroup:"aide"` 를 가진 별도 ward 객체.
+  수간호사가 근무표·보관함·휴가신청·근무자 명단 탭의 「보조인력」 버튼을 처음 누를 때 `ensureAideWard()`가 만들고
+  이름은 `"<상위 병동명> 보조인력"`. 로그인 계정은 상위 병동 것을 그대로 쓰며(`getPrimaryWard()`),
+  현재 화면의 병동은 `getCurrentWard()`가 `staffGroupView`에 따라 상위/하위를 돌려준다.
+  병동 달력·관리자 요청은 상위 병동 공용. 관리자 병동 선택 목록에는 하위 병동이 나오지 않는다(상위 선택 후 전환).
 
 - `nurses[]`: `id`(형식 `n-<timestamp>`), `name`,
   `skillLevel`(구분: `HN`=수간호사/관리(인원 산정 제외) | `LV1`=신규 | `LV2`=주니어 | `LV3`=중간 | `LV4`=시니어 —
@@ -30,7 +36,9 @@
 - `requests[]` / `leaveRequests[]`: `{nurseId, date:"YYYY-MM-DD", type:"WO"|"AL"|...}`
 - `schedulesByMonth`: 키 `"YYYY-MM"` → `{ "YYYY-MM-DD": { nurseId: code } }`
   ⚠️ 날짜 키만 있고 셀이 빈 달이 존재할 수 있음 (빈 달 ≠ 없는 달)
-- `staffingRules`: `{weekday|saturday|holiday: {D|E|N: {min,max}}}`
+  휴무는 `OF`로 통일(2026-09-14). 저장돼 있던 `O`는 로드 시 OF로 변환되고 다음 `saveData()`에 반영된다.
+  비재직 코드 `입사`·`퇴사`·`무급`은 휴무 계열이지만 OFF 집계 제외(`isNonEmploymentCode`).
+- `staffingRules`: `{weekday|saturday|holiday: {D|E|N: {min,max}}}` — `staffingRulesSource`는 `'manual'`(입력칸) 또는 `'inferred'`(근무표 역산 제안을 수간호사가 확인 후 반영, 2026-09-14)
 - `seniorStaffing`: 병동별 교대당 시니어 최소/최대 `{D|E|N: {min,max}}` —
   0 = 제한 없음, 노드 없으면 미적용(하위 호환). 시니어 판정 = `isNurseSeniorSupport`
   (LV4+ 또는 차지가능/프리셉터/교육담당 태그). 소프트 규칙: 자동생성이 D/E만
